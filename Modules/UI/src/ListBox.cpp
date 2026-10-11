@@ -45,6 +45,7 @@ namespace X_Y
         m_LastFoldWidth = -1;
         m_FoldedCount = 0;
         UpdateHeight();
+        RequestRepaint();
     }
 
     void ListBox::SetLineHeight(int h)
@@ -272,8 +273,7 @@ namespace X_Y
         if (index < 0)
             return;
 
-        m_SelectedIndex = index;
-        RequestRepaint();
+        SetSelectedIndex(index);
         e.Handled = true;
     }
 

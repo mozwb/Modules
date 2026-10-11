@@ -48,8 +48,20 @@ namespace X_Y
         int GetTotalLines() const { return m_TotalLines; }
 
         int GetSelectedIndex() const { return m_SelectedIndex; }
-        void SetSelectedIndex(int idx) { m_SelectedIndex = idx; }
-        void SetSelectedColor(uint32_t color) { m_SelectedColor = color; }
+        void SetSelectedIndex(int idx)
+        {
+            if (m_SelectedIndex == idx)
+                return;
+            m_SelectedIndex = idx;
+            RequestRepaint();
+        }
+        void SetSelectedColor(uint32_t color)
+        {
+            if (m_SelectedColor == color)
+                return;
+            m_SelectedColor = color;
+            RequestRepaint();
+        }
 
         int GetLineHeight() const { return m_LineHeight; }
         void SetLineHeight(int h);

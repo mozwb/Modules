@@ -1,5 +1,6 @@
 #include "../dock/Dock.h"
 #include "DockLayout/DockLayout.h"
+#include "Widget/FontLibrary.h"
 #include "../UiCore/UINode.h"
 #include <algorithm>
 
@@ -465,12 +466,33 @@ namespace X_Y
         }
 
         // ② tab 栏（最后画，最上层；几何走 TabBarTotalWidth/TabIndexAt，与命中同源）
+        const Font &font = FontLibrary::Instance().GetDefault();
         for (int i = 0; i < (int)m_Panels.size(); ++i)
         {
             const bool isActive = (i == m_ActiveIndex);
-            canvas.FillRect(i * kTabWidth, 0, kTabWidth, m_MenuBarHeight,
+            const int tabX = i * kTabWidth;
+            canvas.FillRect(tabX, 0, kTabWidth, m_MenuBarHeight,
                             isActive ? 0xFF007ACC : 0xFF3E3E42);
-            // (字体绘制后续接 FontLibrary；先只画色块+索引)
+
+            const std::string &storedTitle = m_Panels[i].Title;
+            const std::string fallbackTitle = "Panel " + std::to_string(i + 1);
+            const std::string &title =
+                storedTitle.empty() ? fallbackTitle : storedTitle;
+            const int textWidth = font.MeasureText(title.c_str());
+            const int availableWidth = kTabWidth - 16;
+            const int textX = tabX + (textWidth <= availableWidth
+                                          ? (kTabWidth - textWidth) / 2
+                                          : 8);
+            const int textY = std::max(0, (m_MenuBarHeight - font.GetHeight()) / 2);
+
+            canvas.SetClip(tabX, 0, kTabWidth, m_MenuBarHeight);
+            canvas.DrawText(
+                font,
+                textX,
+                textY,
+                title.c_str(),
+                isActive ? 0xFFFFFFFF : 0xFFD6D6D6);
+            canvas.ResetClip();
         }
     }
 

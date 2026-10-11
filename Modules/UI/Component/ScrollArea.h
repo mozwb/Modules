@@ -10,7 +10,19 @@ namespace X_Y
     public:
         ScrollArea() = default;
 
-        void SetContent(Component *content) { m_Content = content; }
+        void SetContent(Component *content)
+        {
+            if (m_Content == content)
+                return;
+
+            if (m_Content)
+                m_Content->SetRepaintCallback({});
+
+            m_Content = content;
+            if (m_Content)
+                m_Content->SetRepaintCallback([this]()
+                                              { RequestRepaint(); });
+        }
         Component *GetContent() const { return m_Content; }
 
         void SetScrollOffset(int offset);
