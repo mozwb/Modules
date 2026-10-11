@@ -4,15 +4,35 @@
 #include "UI/Panel/HexViewer.h"
 #include "UI/Panel/ImageViewer.h"
 #include "UI/Panel/LogViewer.h"
+#include "UI/Panel/MediaPlayerPanel.h"
 #include "Widget/Application.h"
 #include "Log/XYLog.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <string>
 
 namespace
 {
+    bool IsVideoPath(const X_Y::XPath &path)
+    {
+        std::string extension = path.Path().extension().string();
+        std::transform(
+            extension.begin(),
+            extension.end(),
+            extension.begin(),
+            [](unsigned char value)
+            {
+                return static_cast<char>(std::tolower(value));
+            });
+        return extension == ".mp4" || extension == ".mkv" ||
+               extension == ".avi" || extension == ".mov" ||
+               extension == ".webm" || extension == ".wmv" ||
+               extension == ".m4v";
+    }
+
     class ColorPanel final : public X_Y::Panel
     {
     public:
@@ -68,6 +88,11 @@ int main(int argc, char *argv[])
     if (!inputPath.Empty())
         imageViewer->OpenFile(inputPath);
     layout->CenterDock().AddPanel(std::move(imageViewer), "Image");
+
+    auto mediaPlayer = std::make_unique<X_Y::MediaPlayerPanel>();
+    if (!inputPath.Empty() && IsVideoPath(inputPath))
+        mediaPlayer->OpenFile(inputPath);
+    layout->CenterDock().AddPanel(std::move(mediaPlayer), "Media Player");
 
     layout->RightDock().AddPanel(
         std::make_unique<ColorPanel>("Right Dock", 0xFF4E342E), "Right");

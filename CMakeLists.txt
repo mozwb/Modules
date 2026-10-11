@@ -176,6 +176,11 @@ target_link_libraries(XCore PUBLIC
     "${_xy_ffmpeg_source_dir}/libavutil/libavutil.a"
     m atomic ole32 uuid user32 bcrypt)
 add_dependencies(XCore XYFFmpegBuild)
+
+# ── Media playback (control/state above XCore device and decoder services) ──
+xy_module(Media)
+target_link_libraries(Media PUBLIC XCore)
+
 xy_module(Middle)
 
 
@@ -225,7 +230,7 @@ endif()
 
 # ── UI（含 imgui，依赖 Widget/DataStore/Timer + opengl32）──
 xy_module(UI)
-target_link_libraries(UI PUBLIC Widget DataStore XCore)
+target_link_libraries(UI PUBLIC Widget DataStore XCore Media)
 if(WIN32)
     target_link_libraries(UI PUBLIC opengl32)
 endif()
