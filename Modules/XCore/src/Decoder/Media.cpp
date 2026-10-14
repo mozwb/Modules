@@ -11,7 +11,9 @@ extern "C"
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -42,6 +44,7 @@ namespace X_Y::Decode
 		bool DemuxEnded = false;
 		bool VideoFlushSent = false;
 		bool AudioFlushSent = false;
+		double SeekTargetSeconds = 0.0;
 		MediaInfo Info;
 		MediaError Error = MediaError::None;
 		std::string ErrorMessage;
@@ -70,6 +73,7 @@ namespace X_Y::Decode
 			DemuxEnded = false;
 			VideoFlushSent = false;
 			AudioFlushSent = false;
+			SeekTargetSeconds = 0.0;
 			Info = {};
 			Error = MediaError::None;
 			ErrorMessage.clear();
@@ -466,6 +470,50 @@ namespace X_Y::Decode
 							return MediaReadStatus::Error;
 						}
 						av_frame_unref(Frame);
+
+						if (output.TimestampSeconds < SeekTargetSeconds)
+						{
+							if (output.Type == MediaStreamType::Video ||
+								output.SampleRate == 0 ||
+								output.SampleCount == 0)
+							{
+								continue;
+							}
+
+							const double frameEndSeconds =
+								output.TimestampSeconds +
+								static_cast<double>(output.SampleCount) /
+									output.SampleRate;
+							if (frameEndSeconds <= SeekTargetSeconds)
+								continue;
+
+							const uint32_t samplesToSkip = static_cast<uint32_t>(
+								std::ceil(
+									(SeekTargetSeconds - output.TimestampSeconds) *
+									output.SampleRate));
+							const uint32_t skippedSamples =
+								std::min(samplesToSkip, output.SampleCount);
+							const uint64_t skippedBytes =
+								static_cast<uint64_t>(skippedSamples) *
+								output.Channels * sizeof(float);
+							if (skippedBytes > output.Data.Size)
+							{
+								Fail(
+									MediaError::DecodeFailed,
+									"Decoded audio frame has an invalid sample buffer");
+								return MediaReadStatus::Error;
+							}
+							std::memmove(
+								output.Data.Data,
+								output.Data.Data + skippedBytes,
+								static_cast<size_t>(output.Data.Size - skippedBytes));
+							output.Data.Size -= skippedBytes;
+							output.SampleCount -= skippedSamples;
+							output.TimestampSeconds =
+								SeekTargetSeconds;
+							if (output.SampleCount == 0)
+								continue;
+						}
 						return MediaReadStatus::Frame;
 					}
 
@@ -626,6 +674,58 @@ namespace X_Y::Decode
 	const std::string &Media::GetErrorMessage() const
 	{
 		return m_Impl->ErrorMessage;
+	}
+
+	bool Media::Seek(double timeSeconds)
+	{
+		if (!IsOpen())
+			return m_Impl->Fail(MediaError::InvalidPath, "No media file is open");
+		if (!std::isfinite(timeSeconds) || timeSeconds < 0.0)
+			return m_Impl->Fail(MediaError::InvalidPath, "Media seek time is invalid");
+
+		const double boundedTime = m_Impl->Info.DurationSeconds > 0.0
+									   ? std::min(timeSeconds, m_Impl->Info.DurationSeconds)
+									   : timeSeconds;
+		const long double timestamp =
+			static_cast<long double>(boundedTime) * AV_TIME_BASE +
+			(m_Impl->Format->start_time == AV_NOPTS_VALUE
+				 ? 0.0L
+				 : static_cast<long double>(m_Impl->Format->start_time));
+		if (timestamp < std::numeric_limits<int64_t>::min() ||
+			timestamp > std::numeric_limits<int64_t>::max())
+			return m_Impl->Fail(MediaError::InvalidPath, "Media seek time is out of range");
+
+		const int result = avformat_seek_file(
+			m_Impl->Format,
+			-1,
+			std::numeric_limits<int64_t>::min(),
+			static_cast<int64_t>(timestamp),
+			std::numeric_limits<int64_t>::max(),
+			AVSEEK_FLAG_BACKWARD);
+		if (result < 0)
+			return m_Impl->Fail(
+				MediaError::DecodeFailed,
+				"Failed to seek in media: " + m_Impl->AvError(result));
+
+		av_packet_unref(m_Impl->Packet);
+		av_frame_unref(m_Impl->Frame);
+		if (m_Impl->VideoCodec)
+			avcodec_flush_buffers(m_Impl->VideoCodec);
+		if (m_Impl->AudioCodec)
+			avcodec_flush_buffers(m_Impl->AudioCodec);
+		swr_free(&m_Impl->Resampler);
+		av_channel_layout_uninit(&m_Impl->ResamplerLayout);
+		m_Impl->ResamplerFormat = AV_SAMPLE_FMT_NONE;
+		m_Impl->ResamplerRate = 0;
+		m_Impl->PendingCodec = nullptr;
+		m_Impl->DemuxEnded = false;
+		m_Impl->VideoFlushSent = false;
+		m_Impl->AudioFlushSent = false;
+		m_Impl->SeekTargetSeconds =
+			static_cast<double>(timestamp) / AV_TIME_BASE;
+		m_Impl->Error = MediaError::None;
+		m_Impl->ErrorMessage.clear();
+		return true;
 	}
 
 	MediaReadStatus Media::DecodeNext(MediaFrame &frame)

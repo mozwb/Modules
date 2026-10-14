@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -38,6 +39,7 @@ namespace X_Y::Media
 		std::mutex VideoMutex;
 		std::condition_variable VideoQueueCondition;
 		double VideoStartTimestamp = 0.0;
+		double VideoClockOriginSeconds = 0.0;
 		bool HasVideoStartTimestamp = false;
 		double VideoClockElapsedSeconds = 0.0;
 		std::chrono::steady_clock::time_point VideoClockStartedAt;
@@ -97,6 +99,7 @@ namespace X_Y::Media
 				HasVideoStartTimestamp = false;
 			}
 			VideoClockElapsedSeconds = 0.0;
+			VideoClockOriginSeconds = 0.0;
 			AudioDrained.store(false, std::memory_order_relaxed);
 			EndOfStream.store(false, std::memory_order_relaxed);
 			Failed.store(false, std::memory_order_relaxed);
@@ -182,7 +185,8 @@ namespace X_Y::Media
 						return;
 					if (!HasVideoStartTimestamp)
 					{
-						VideoStartTimestamp = frame.TimestampSeconds;
+						VideoStartTimestamp =
+							frame.TimestampSeconds - VideoClockOriginSeconds;
 						HasVideoStartTimestamp = true;
 					}
 					VideoFrames.push_back(std::move(frame));
@@ -448,6 +452,7 @@ namespace X_Y::Media
 			m_Impl->HasVideoStartTimestamp = false;
 		}
 		m_Impl->VideoClockElapsedSeconds = 0.0;
+		m_Impl->VideoClockOriginSeconds = 0.0;
 		m_Impl->AudioDrained.store(false, std::memory_order_relaxed);
 		m_Impl->Decoder->Close();
 		m_Impl->Decoder.reset();
@@ -468,6 +473,71 @@ namespace X_Y::Media
 		}
 		m_Impl->ClearError();
 		m_Impl->State.store(PlaybackState::Ready, std::memory_order_release);
+		return true;
+	}
+
+	bool MediaPlayer::Seek(double timeSeconds)
+	{
+		std::lock_guard lifecycleLock(m_Impl->LifecycleMutex);
+		if (!m_Impl->Decoder || !m_Impl->Decoder->IsOpen())
+			return m_Impl->SetError("No media file is open");
+		if (!std::isfinite(timeSeconds) || timeSeconds < 0.0)
+			return m_Impl->SetError("Media seek time is invalid");
+
+		const double boundedTime = m_Impl->Info.DurationSeconds > 0.0
+									   ? std::min(timeSeconds, m_Impl->Info.DurationSeconds)
+									   : timeSeconds;
+		const bool wasPlaying = m_Impl->Playing.exchange(
+			false, std::memory_order_acq_rel);
+		if (m_Impl->Device)
+			m_Impl->Device->Stop();
+		m_Impl->Shutdown.store(true, std::memory_order_release);
+		m_Impl->VideoQueueCondition.notify_all();
+		m_Impl->StopDecodeThread();
+
+		{
+			std::lock_guard videoLock(m_Impl->VideoMutex);
+			m_Impl->VideoFrames.clear();
+			m_Impl->HasVideoStartTimestamp = false;
+		}
+		m_Impl->ReadPosition.store(0, std::memory_order_relaxed);
+		m_Impl->WritePosition.store(0, std::memory_order_relaxed);
+		m_Impl->PlayedSamples.store(
+			m_Impl->Info.HasAudio
+				? static_cast<uint64_t>(
+					  boundedTime * m_Impl->Format.SampleRate *
+					  m_Impl->Format.Channels)
+				: 0,
+			std::memory_order_relaxed);
+		m_Impl->VideoClockElapsedSeconds = boundedTime;
+		m_Impl->VideoClockOriginSeconds = boundedTime;
+		m_Impl->AudioDrained.store(false, std::memory_order_relaxed);
+		m_Impl->EndOfStream.store(false, std::memory_order_relaxed);
+		m_Impl->Failed.store(false, std::memory_order_relaxed);
+
+		if (!m_Impl->Decoder->Seek(boundedTime))
+		{
+			m_Impl->Failed.store(true, std::memory_order_release);
+			m_Impl->Playing.store(false, std::memory_order_release);
+			return m_Impl->SetError(m_Impl->Decoder->GetErrorMessage());
+		}
+		if (!m_Impl->StartDecodeThread())
+			return false;
+
+		m_Impl->ClearError();
+		m_Impl->State.store(PlaybackState::Paused, std::memory_order_release);
+		if (wasPlaying)
+		{
+			m_Impl->VideoClockStartedAt = std::chrono::steady_clock::now();
+			m_Impl->Playing.store(true, std::memory_order_release);
+			if (m_Impl->Device && !m_Impl->Device->Start())
+			{
+				m_Impl->Playing.store(false, std::memory_order_release);
+				return m_Impl->SetError(m_Impl->Device->GetErrorMessage());
+			}
+			m_Impl->VideoQueueCondition.notify_all();
+			m_Impl->State.store(PlaybackState::Playing, std::memory_order_release);
+		}
 		return true;
 	}
 

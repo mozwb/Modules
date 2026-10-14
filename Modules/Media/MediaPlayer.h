@@ -31,6 +31,7 @@ namespace X_Y::Media
 		bool Play();
 		void Pause();
 		bool Stop();
+		bool Seek(double timeSeconds);
 		void Close();
 
 		bool TakeVideoFrame(Decode::MediaFrame &frame);

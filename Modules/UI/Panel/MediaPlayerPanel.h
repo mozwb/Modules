@@ -9,6 +9,7 @@ namespace X_Y
 {
 	class Button;
 	class Label;
+	class MediaSeekBar;
 	class Ticker;
 	class VideoView;
 
@@ -32,6 +33,7 @@ namespace X_Y
 		VideoView *m_VideoView = nullptr;
 		Button *m_PlayPauseButton = nullptr;
 		Button *m_StopButton = nullptr;
+		MediaSeekBar *m_ProgressBar = nullptr;
 		Label *m_Status = nullptr;
 		std::unique_ptr<Ticker> m_FrameTicker;
 	};

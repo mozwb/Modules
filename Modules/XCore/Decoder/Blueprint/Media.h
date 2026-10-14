@@ -98,6 +98,7 @@ namespace X_Y::Decode
 		MediaError GetError() const;
 		const std::string &GetErrorMessage() const;
 
+		bool Seek(double timeSeconds);
 		MediaReadStatus DecodeNext(MediaFrame &frame);
 		MediaReadStatus ReadNext(MediaFrame &frame);
 
