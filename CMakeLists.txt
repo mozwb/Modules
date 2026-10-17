@@ -62,6 +62,7 @@ function(xy_module NAME)
     add_library(${NAME} STATIC ${_src})
 
     target_include_directories(${NAME} PUBLIC
+        "${_src_dir}/include"                 # 对外头文件：#include <Network/...>
         "${_src_dir}"                        # 本模块根：内部 #include "Canvas.h"
         "${PROJECT_SOURCE_DIR}/Modules"       # 跨模块：#include "Widget/Canvas.h"
         "${PROJECT_SOURCE_DIR}")              # vendor/... 从 X_Y 根解析
@@ -176,6 +177,22 @@ target_link_libraries(XCore PUBLIC
     "${_xy_ffmpeg_source_dir}/libavutil/libavutil.a"
     m atomic ole32 uuid user32 bcrypt)
 add_dependencies(XCore XYFFmpegBuild)
+
+# ── 跨平台 TCP 网络基础 ──
+xy_module(Network)
+if(WIN32)
+    set_source_files_properties(
+        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Linux/TcpClientLinux.cpp"
+        PROPERTIES HEADER_FILE_ONLY TRUE)
+    target_link_libraries(Network PUBLIC ws2_32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_source_files_properties(
+        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Windows/TcpClientWindows.cpp"
+        PROPERTIES HEADER_FILE_ONLY TRUE)
+else()
+    message(FATAL_ERROR "Network currently supports Windows and Linux only")
+endif()
+target_link_libraries(Network PUBLIC XCore)
 
 # ── Media playback (control/state above XCore device and decoder services) ──
 xy_module(Media)

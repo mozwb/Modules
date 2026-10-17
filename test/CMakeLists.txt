@@ -15,6 +15,11 @@ add_executable(XYAudioOutputTool
     src/AudioOutputTool.cpp)
 target_link_libraries(XYAudioOutputTool PRIVATE Media)
 
+add_executable(XYNetworkSelfTest
+    src/NetworkSelfTest.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(XYNetworkSelfTest PRIVATE Network Threads::Threads)
+
 add_executable(XYVisualTest
     src/main.cpp)
 target_link_libraries(XYVisualTest PRIVATE UI)
@@ -27,4 +32,5 @@ if(BUILD_TESTING)
         add_test(NAME XYMediaDecoderSelfTest COMMAND XYMediaTool --self-test)
     endif()
     add_test(NAME XYMediaPlayerSelfTest COMMAND XYAudioOutputTool --self-test)
+    add_test(NAME XYNetworkSelfTest COMMAND XYNetworkSelfTest)
 endif()
