@@ -1,5 +1,5 @@
 ﻿#include "XCore/FilesSystem/FilesSystem.h"
-#include "XCore/XYTools.h"
+#include "XCore/Decoder/Text.h"
 #include <fstream>
 #include <filesystem>
 #ifdef XY_PLATFORM_WINDOWS
@@ -97,7 +97,9 @@ namespace X_Y
 		}
 
 		// szFile 是 GBK char*，转换为wstring
-		return gbk_to_wstring(ofn.lpstrFile);
+		return Decoder::Decode(
+			Decode::GBKText{ofn.lpstrFile},
+			Decode::ToUTF16{});
 	}
 
 	std::optional<std::wstring> FilesSystem::SaveFileDialog(const char *filter)
@@ -123,7 +125,9 @@ namespace X_Y
 			return std::nullopt;
 		}
 
-		return gbk_to_wstring(ofn.lpstrFile);
+		return Decoder::Decode(
+			Decode::GBKText{ofn.lpstrFile},
+			Decode::ToUTF16{});
 	}
 
 #endif

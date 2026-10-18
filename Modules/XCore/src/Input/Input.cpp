@@ -6,7 +6,7 @@
 #define OEMRESOURCE
 #include <windows.h>
 #endif
-#include "../../XYTools.h"
+#include "XCore/Decoder/Text.h"
 
 namespace X_Y
 {
@@ -272,7 +272,9 @@ namespace X_Y
         {
             if (!utf8Str)
                 return false;
-            auto wopt = utf8_to_wstring(utf8Str);
+            auto wopt = Decoder::Decode(
+                Decode::UTF8Text{utf8Str},
+                Decode::ToUTF16{});
             if (!wopt)
                 return false;
             return SimulateTypeText(wopt->c_str(), charIntervalMs);

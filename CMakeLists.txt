@@ -178,16 +178,16 @@ target_link_libraries(XCore PUBLIC
     m atomic ole32 uuid user32 bcrypt)
 add_dependencies(XCore XYFFmpegBuild)
 
-# ── 跨平台 TCP 网络基础 ──
+# ── 跨平台网络端点 ──
 xy_module(Network)
 if(WIN32)
     set_source_files_properties(
-        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Linux/TcpClientLinux.cpp"
+        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Linux/SocketHandleLinux.cpp"
         PROPERTIES HEADER_FILE_ONLY TRUE)
     target_link_libraries(Network PUBLIC ws2_32)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_source_files_properties(
-        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Windows/TcpClientWindows.cpp"
+        "${PROJECT_SOURCE_DIR}/Modules/Network/src/Windows/SocketHandleWindows.cpp"
         PROPERTIES HEADER_FILE_ONLY TRUE)
 else()
     message(FATAL_ERROR "Network currently supports Windows and Linux only")

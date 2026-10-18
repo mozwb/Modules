@@ -2,11 +2,7 @@
 #include <Log/XYLog.h>
 #include "Memory/Buffer.h"
 #include "Timer/Timer.h"
-#include <optional>
-
-#ifdef XY_PLATFORM_WINDOWS
-#include <windows.h>
-#endif
+#include <string>
 
 namespace X_Y
 {
@@ -60,72 +56,122 @@ namespace X_Y
 #define XY_PROFILE_FUNCTION()
 #endif
 
-#ifdef XY_PLATFORM_WINDOWS
-// GBK(CP_ACP) → std::wstring(UTF‑16)
-inline std::optional<std::wstring> gbk_to_wstring(const char *gbk)
+namespace X_Y
 {
-	if (!gbk || *gbk == '\0')
-		return std::wstring{};
-
-	int wlen = MultiByteToWideChar(CP_ACP, 0, gbk, -1, nullptr, 0);
-	if (wlen <= 0)
+	inline bool starts_with(const std::string &s, const std::string &prefix)
 	{
-		return std::nullopt;
+		return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 	}
-	std::wstring wstr(wlen, 0);
-	MultiByteToWideChar(CP_ACP, 0, gbk, -1, wstr.data(), wlen);
-	return wstr;
-}
-
-// UTF‑16 wstring → UTF‑8 std::string
-inline std::optional<std::string> wstring_to_utf8(const std::wstring &wstr)
-{
-	if (wstr.empty())
-		return std::string{};
-
-	int u8len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-	if (u8len <= 0)
+	inline bool ends_with(const std::string &s, const std::string &suffix)
 	{
-		return std::nullopt;
+		if (s.size() < suffix.size())
+			return false;
+		return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 	}
-	std::string utf8(u8len, 0);
-	WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, utf8.data(), u8len, nullptr, nullptr);
-	return utf8;
-}
-
-// 对外接口：GBK char* → UTF‑8 std::string
-inline std::optional<std::string> gbk_to_utf8(const char *gbk_str)
-{
-	auto wopt = gbk_to_wstring(gbk_str);
-	if (!wopt)
-		return std::nullopt;
-	return wstring_to_utf8(*wopt);
-}
-
-// 重载 std::string
-inline std::optional<std::string> gbk_to_utf8(const std::string &gbk_str)
-{
-	return gbk_to_utf8(gbk_str.c_str());
-}
-// UTF‑8 char* → std::wstring(UTF‑16)
-inline std::optional<std::wstring> utf8_to_wstring(const char *utf8)
-{
-	if (!utf8 || *utf8 == '\0')
-		return std::wstring{};
-
-	int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
-	if (wlen <= 0)
+	inline bool contains(const std::string &s, const std::string &substr)
 	{
-		return std::nullopt;
+		return s.find(substr) != std::string::npos;
 	}
-	std::wstring wstr(wlen, 0);
-	MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wstr.data(), wlen);
-	return wstr;
-}
+	inline std::string ToLower(const std::string &s)
+	{
+		std::string result = s;
+		for (char &c : result)
+			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		return result;
+	}
 
-// 重载 std::string
-inline std::optional<std::wstring> utf8_to_wstring(const std::string &utf8_str)
-{
-	return utf8_to_wstring(utf8_str.c_str());
+	inline std::string ToUpper(const std::string &s)
+	{
+		std::string result = s;
+		for (char &c : result)
+			c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+		return result;
+	}
+	// 忽略大小写判断是否相等
+	inline bool equals_ignore_case(const std::string &s1, const std::string &s2)
+	{
+		if (s1.size() != s2.size())
+			return false;
+		for (size_t i = 0; i < s1.size(); ++i)
+		{
+			auto c1 = static_cast<unsigned char>(s1[i]);
+			auto c2 = static_cast<unsigned char>(s2[i]);
+			if (std::tolower(c1) != std::tolower(c2))
+				return false;
+		}
+		return true;
+	}
+
+	inline bool IsNumber(const std::string &s)
+	{
+		if (s.empty())
+			return false;
+		for (char c : s)
+		{
+			if (!std::isdigit(static_cast<unsigned char>(c)))
+				return false;
+		}
+		return true;
+	}
+	inline std::string Trim(const std::string &s)
+	{
+		return TrimRight(TrimLeft(s));
+	}
+	inline std::string TrimLeft(const std::string &s)
+	{
+		size_t start = 0;
+		while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start])))
+			++start;
+		return s.substr(start);
+	}
+	inline std::string TrimRight(const std::string &s)
+	{
+		size_t end = s.size();
+		while (end > 0 && std::isspace(static_cast<unsigned char>(s[end - 1])))
+			--end;
+		return s.substr(0, end);
+	}
+	inline std::vector<std::string> Split(const std::string &s, const std::string &delimiter)
+	{
+		std::vector<std::string> result;
+		size_t start = 0;
+		size_t end = s.find(delimiter);
+		while (end != std::string::npos)
+		{
+			result.push_back(s.substr(start, end - start));
+			start = end + delimiter.length();
+			end = s.find(delimiter, start);
+		}
+		return result;
+	}
+	inline std::string Replace(const std::string &s, const std::string &old_value, const std::string &new_value)
+	{
+		std::string result = s;
+		size_t pos = 0;
+		while ((pos = result.find(old_value, pos)) != std::string::npos)
+		{
+			result.replace(pos, old_value.length(), new_value);
+			pos += new_value.length();
+		}
+		return result;
+	}
+	inline bool IsBlank(const std::string &s)
+	{
+		for (char c : s)
+		{
+			if (!std::isspace(static_cast<unsigned char>(c)))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+	inline bool ParseUnsigned(std::string_view text, std::uint32_t &value)
+	{
+		if (text.empty())
+			return false;
+
+		const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+		return result.ec == std::errc{} && result.ptr == text.data() + text.size();
+	}
 }
-#endif
