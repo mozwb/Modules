@@ -1,6 +1,5 @@
 #include "Network/SocketHandle.h"
 #include "Network/Endpoints.h"
-#include "Network/Tcp.h"
 
 #include <array>
 #include <cstddef>
@@ -417,7 +416,7 @@ namespace
         bool passed = false;
         try
         {
-            X_Y::TcpClient client;
+            X_Y::StreamClient client;
             client.Connect("127.0.0.1", port);
 
             server = std::thread([listener, messageSize = message.size()]

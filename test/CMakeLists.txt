@@ -15,6 +15,10 @@ add_executable(XYAudioOutputTool
     src/AudioOutputTool.cpp)
 target_link_libraries(XYAudioOutputTool PRIVATE Media)
 
+add_executable(XYDirectoryTreeTool
+    src/DirectoryTreeTool.cpp)
+target_link_libraries(XYDirectoryTreeTool PRIVATE XCore)
+
 add_executable(XYNetworkSelfTest
     src/NetworkSelfTest.cpp)
 find_package(Threads REQUIRED)
@@ -33,4 +37,5 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME XYMediaPlayerSelfTest COMMAND XYAudioOutputTool --self-test)
     add_test(NAME XYNetworkSelfTest COMMAND XYNetworkSelfTest)
+    add_test(NAME XYDirectoryTreeSelfTest COMMAND XYDirectoryTreeTool --self-test)
 endif()

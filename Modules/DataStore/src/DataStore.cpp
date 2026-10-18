@@ -1,5 +1,7 @@
 #include "DataStore/DataStore.h"
+#include <algorithm>
 #include <cassert>
+#include <filesystem>
 #include <sstream>
 #include <fstream>
 #include <mutex>
@@ -37,6 +39,44 @@ namespace X_Y
     // ═════════════════════════════════════════════════════════════════════════════
     //  内部工具
     // ═════════════════════════════════════════════════════════════════════════════
+
+    namespace
+    {
+        // 统一为 '/' 分隔，并去掉首尾分隔符与开头的 "./"
+        std::string NormalizeKeyPath(const std::string &path)
+        {
+            std::string normalized;
+            normalized.reserve(path.size());
+
+            bool lastSlash = true;
+            for (char ch : path)
+            {
+                if (ch == '\\')
+                    ch = '/';
+
+                if (ch == '/')
+                {
+                    if (!lastSlash)
+                        normalized += '/';
+                    lastSlash = true;
+                }
+                else
+                {
+                    normalized += ch;
+                    lastSlash = false;
+                }
+            }
+
+            while (normalized.rfind("./", 0) == 0)
+                normalized.erase(0, 2);
+            while (!normalized.empty() && normalized.back() == '/')
+                normalized.pop_back();
+            if (normalized == ".")
+                normalized.clear();
+
+            return normalized;
+        }
+    }
 
     XPath DataStore::KeyToPath(const std::string &key) const
     {
@@ -310,6 +350,47 @@ namespace X_Y
         for (const auto &pair : m_Entries)
             keys.push_back(pair.first);
         return keys;
+    }
+
+    std::vector<std::string> DataStore::ListFiles(const std::string &dir, bool recursive) const
+    {
+        std::shared_lock lock(m_Mutex);
+        if (!m_Enabled)
+            return {}; // 静音
+
+        XPath root = dir.empty() ? m_DataDir : KeyToPath(dir);
+        std::vector<std::string> files;
+        for (const XPath &file : root.ListFiles(recursive))
+        {
+            std::error_code ec;
+            const std::string relative =
+                std::filesystem::relative(file.Path(), m_DataDir.Path(), ec).generic_string();
+            if (ec || relative.empty() || relative == ".dsidx")
+                continue;
+            files.push_back(relative);
+        }
+
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::string DataStore::ToTree(const std::string &dir, const std::string &rootName) const
+    {
+        std::vector<std::string> files = ListFiles(dir, true);
+
+        // ListFiles 返回相对 m_DataDir 的路径；树以 dir 为根时需要去掉该前缀
+        const std::string prefix = NormalizeKeyPath(dir);
+        if (!prefix.empty())
+        {
+            const std::string prefixWithSlash = prefix + '/';
+            for (std::string &file : files)
+            {
+                if (file.compare(0, prefixWithSlash.size(), prefixWithSlash) == 0)
+                    file.erase(0, prefixWithSlash.size());
+            }
+        }
+
+        return BuildTreeText(files, rootName);
     }
 
     // ═════════════════════════════════════════════════════════════════════════════

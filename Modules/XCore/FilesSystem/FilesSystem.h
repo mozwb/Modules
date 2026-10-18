@@ -1,13 +1,94 @@
 ﻿#pragma once
 #include "../Memory/Buffer.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <optional>
 #include <regex>
+#include <string>
+#include <vector>
 
 namespace X_Y
 {
     using File = std::filesystem::path;
+
+    // 将一组相对路径渲染成目录树文本（目录在前、文件在后，同级按名称排序）
+    // rootName 非空时作为首行输出（如需结尾的 '/'，由调用方自行提供）
+    inline std::string BuildTreeText(const std::vector<std::string> &relativePaths,
+                                     const std::string &rootName = "")
+    {
+        struct Node
+        {
+            std::map<std::string, Node> Children;
+            bool IsDirectory() const { return !Children.empty(); }
+        };
+
+        Node root;
+        for (const std::string &raw : relativePaths)
+        {
+            std::string path = raw;
+            std::replace(path.begin(), path.end(), '\\', '/');
+
+            Node *node = &root;
+            std::size_t begin = 0;
+            while (begin < path.size())
+            {
+                const std::size_t end = path.find('/', begin);
+                const std::string part =
+                    path.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+
+                if (!part.empty() && part != ".")
+                    node = &node->Children[part];
+
+                if (end == std::string::npos)
+                    break;
+                begin = end + 1;
+            }
+        }
+
+        std::string out;
+        if (!rootName.empty())
+            out += rootName + '\n';
+
+        std::function<void(const Node &, const std::string &)> render =
+            [&](const Node &node, const std::string &prefix)
+        {
+            std::vector<const std::pair<const std::string, Node> *> children;
+            children.reserve(node.Children.size());
+            for (const auto &child : node.Children)
+                children.push_back(&child);
+
+            std::sort(children.begin(), children.end(),
+                      [](const auto *lhs, const auto *rhs)
+                      {
+                          const bool lhsDir = lhs->second.IsDirectory();
+                          const bool rhsDir = rhs->second.IsDirectory();
+                          if (lhsDir != rhsDir)
+                              return lhsDir;
+                          return lhs->first < rhs->first;
+                      });
+
+            for (std::size_t i = 0; i < children.size(); ++i)
+            {
+                const auto *child = children[i];
+                const bool last = (i + 1 == children.size());
+
+                out += prefix;
+                out += last ? "└─ " : "├─ ";
+                out += child->first;
+                if (child->second.IsDirectory())
+                    out += '/';
+                out += '\n';
+
+                render(child->second, prefix + (last ? "   " : "│  "));
+            }
+        };
+
+        render(root, "");
+        return out;
+    }
 
     class FilesSystem
     {
@@ -117,6 +198,48 @@ namespace X_Y
                 }
             }
             return matchingEntries;
+        }
+        // 列出目录下的所有普通文件；recursive=true 时递归子目录
+        std::vector<XPath> ListFiles(bool recursive = true) const
+        {
+            std::vector<XPath> files;
+            if (!IsDirectory())
+                return files;
+
+            std::error_code ec;
+            if (recursive)
+            {
+                for (std::filesystem::recursive_directory_iterator it(
+                         m_Path, std::filesystem::directory_options::skip_permission_denied, ec),
+                     end;
+                     it != end; it.increment(ec))
+                {
+                    if (ec)
+                        break;
+                    if (it->is_regular_file(ec))
+                        files.emplace_back(it->path());
+                }
+            }
+            else
+            {
+                for (std::filesystem::directory_iterator it(m_Path, ec), end;
+                     it != end; it.increment(ec))
+                {
+                    if (ec)
+                        break;
+                    if (it->is_regular_file(ec))
+                        files.emplace_back(it->path());
+                }
+            }
+            return files;
+        }
+        // 以自身为根渲染目录树；rootName 非空时作为首行
+        std::string ToTree(const std::string &rootName = "") const
+        {
+            std::vector<std::string> relativePaths;
+            for (const XPath &file : ListFiles(true))
+                relativePaths.push_back(file.getRelativePath(*this));
+            return BuildTreeText(relativePaths, rootName);
         }
         bool RemoveAll()
         {

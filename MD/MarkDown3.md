@@ -102,6 +102,8 @@ std::vector<XPath> matchingEntries;
 			}
 			return matchingEntries;
 		}
+std::vector<XPath> ListFiles(bool recursive = true) const;   // 递归列出普通文件
+std::string ToTree(const std::string& rootName = "") const;  // 渲染目录树文本
 bool RemoveAll() { std::error_code ec; std::filesystem::remove_all(m_Path, ec); return !ec; }
 bool CopyDirectoryTo(const File& dest) const {
 			std::error_code ec;
@@ -172,6 +174,10 @@ bool CopyDirectoryTo(const File& dest) const {
     void    Rename(const std::string& oldKey, const std::string& newKey);
     bool    Contains(const std::string& key) const;
     std::vector<std::string> ListKeys() const;
+
+    // ── 目录遍历 ──
+    std::vector<std::string> ListFiles(const std::string& dir = "", bool recursive = true) const;
+    std::string ToTree(const std::string& dir = "", const std::string& rootName = "") const;
 
     // ── 生命周期 ──
     void ClearAll();

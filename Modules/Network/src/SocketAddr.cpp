@@ -9,7 +9,7 @@
 #include <string>
 #include <system_error>
 
-#ifdef XY_PLATFORM_WINDOWS
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

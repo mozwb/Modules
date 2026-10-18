@@ -54,6 +54,13 @@ namespace X_Y
         bool Contains(const std::string &key) const;
         std::vector<std::string> ListKeys() const;
 
+        // ── 目录遍历 ──
+        // 列出数据目录下 dir 中的所有文件（相对 m_DataDir 的路径，自动排除 .dsidx）
+        // dir 为空表示数据根目录；recursive=false 时只列出直属文件
+        std::vector<std::string> ListFiles(const std::string &dir = "", bool recursive = true) const;
+        // 将 dir 下的文件组织成树形文本；rootName 非空时作为首行（如 "assets/"）
+        std::string ToTree(const std::string &dir = "", const std::string &rootName = "") const;
+
         // ── 生命周期 ──
         void ClearAll();
 
