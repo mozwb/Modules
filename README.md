@@ -58,6 +58,18 @@ X_Y/Modules
 自检也已注册到 CTest：配置并构建后运行 `ctest --test-dir build --output-on-failure`。
 图片格式由 `vendor/stb/stb_image.h` 提供。
 
+### 目录树导出
+
+`XYToTree` 把目录导出成树形文本，可直接打印到终端或写入文件：
+
+- `test/build/XYToTree.exe`：导出 `Modules` 目录
+- `test/build/XYToTree.exe path/to/dir --out tree.txt`：导出指定目录到文件
+
+仓库根目录的 `ToTree.bat` 会自动配置、增量构建并运行该工具：
+
+- `ToTree.bat`
+- `ToTree.bat Modules --out tree.txt`
+
 ### 音视频解码
 
 `X_Y::Decode::MediaDecoder` 基于 `vendor/FFmpeg` 中的 FFmpeg 源码，可读取文件的音视频流信息并逐帧解码：

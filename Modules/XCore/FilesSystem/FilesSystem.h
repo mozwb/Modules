@@ -97,6 +97,13 @@ namespace X_Y
         {
             return std::filesystem::exists(filepath);
         }
+        // 获取当前工作目录；失败时返回空路径
+        static File CurrentDirectory()
+        {
+            std::error_code ec;
+            File path = std::filesystem::current_path(ec);
+            return ec ? File{} : path;
+        }
         static Buffer ReadFileBinary(const File &filepath);
         static bool WriteFileBinary(const File &filepath, const Buffer &buffer);
         static bool AppendFileBinary(const File &filepath, const Buffer &buffer);
@@ -114,6 +121,12 @@ namespace X_Y
     public:
         XPath() = default;
         XPath(const File &path) : m_Path(path) {}
+
+        // 当前工作目录
+        static XPath CurrentDirectory()
+        {
+            return XPath(FilesSystem::CurrentDirectory());
+        }
 
         // ── 路径访问 ──
         const File &Path() const { return m_Path; }

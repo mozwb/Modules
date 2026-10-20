@@ -29,6 +29,7 @@ XPath
         {
             return std::filesystem::exists(filepath);
         }
+        static File CurrentDirectory();   // 当前工作目录
         static Buffer ReadFileBinary(const File& filepath);
         static bool WriteFileBinary(const File& filepath, const Buffer& buffer);
         static bool AppendFileBinary(const File& filepath, const Buffer& buffer);
@@ -43,6 +44,9 @@ XPath
 然后是基于这个静态类写的XPath,大致分这几部分
 
 ```cpp
+// 当前工作目录
+static XPath CurrentDirectory() { return XPath(FilesSystem::CurrentDirectory()); }
+
 // ── 路径访问 ──
 const File& Path() const { return m_Path; }
 void SetPath(const File& path) { m_Path = path; }

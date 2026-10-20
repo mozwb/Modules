@@ -90,7 +90,9 @@ namespace X_Y
         if (Data)
         {
             std::memcpy(newData, Data, Size);
+            const uint64_t preservedSize = Size;
             Release();
+            Size = preservedSize; // Release() 会清零 Size，扩容后必须恢复
         }
         Data = newData;
         Capacity = newCapacity;
