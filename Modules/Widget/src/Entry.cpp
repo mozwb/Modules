@@ -2,7 +2,7 @@
 #ifdef XY_PLATFORM_WINDOWS
 #include "Win32/Win32Class.h"
 #include "winConfigure.h"
-#include "Dpi.h"
+#include "Widget/Dpi.h"
 extern int main(int argc, char *argv[]);
 int WINAPI WinMain(
     _In_ HINSTANCE hInstance,

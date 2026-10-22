@@ -1,5 +1,5 @@
 #pragma once
-#include "XCore/Input/Input.h"
+#include "Input/Input.h"
 
 namespace X_Y
 {

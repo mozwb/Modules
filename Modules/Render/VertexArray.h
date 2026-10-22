@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include"XCore/XYCore.h"
+#include"Core/Core.h"
 #include"Render/Buffer.h"
 namespace X_Y {
 	class VertexArray

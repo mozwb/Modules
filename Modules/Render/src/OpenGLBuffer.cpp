@@ -1,6 +1,6 @@
-﻿#include"Render/OpenGL/OpenGLBuffer.h"
+﻿#include"Render/src/OpenGL/OpenGLBuffer.h"
 #include<glad/glad.h>
-#include"XCore/XYTools.h"
+#include"Core/Core.h"
 namespace X_Y {
 	/////////////////////////////////////////////////////////////////////////////
 // VertexBuffer /////////////////////////////////////////////////////////////

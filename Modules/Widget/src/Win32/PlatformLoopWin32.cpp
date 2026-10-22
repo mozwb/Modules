@@ -1,7 +1,7 @@
-﻿#include "PlatformLoop.h"
+﻿#include "Widget/PlatformLoop.h"
 #include "Win32/Win32Class.h"
 #include "winConfigure.h"
-#include "Dpi.h"
+#include "Widget/Dpi.h"
 #include <windows.h>
 
 namespace X_Y {

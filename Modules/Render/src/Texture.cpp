@@ -1,6 +1,6 @@
 ﻿#include"Render/Texture.h"
 #include"Render/Render.h"
-#include<Render/OpenGL/OpenGLTexture.h>
+#include<Render/src/OpenGL/OpenGLTexture.h>
 namespace X_Y {
 
 	Ref<Texture2D> Texture2D::Create(const TextureSpecification& specification)

@@ -1,6 +1,6 @@
 #pragma once
 #include "ProcessMemoryImpl.h"
-#include "XCore/XYCore.h"
+#include "Core/Core.h"
 namespace X_Y
 {
     // 原本想做成工具静态类，但是它impl内部其实持有变量记录状态，

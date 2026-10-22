@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include"XCore/XYCore.h"
+#include"Core/Core.h"
 namespace X_Y {
 	class UniformBuffer {
 

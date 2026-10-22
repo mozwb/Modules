@@ -1,6 +1,6 @@
 ﻿#pragma once
-#include"XCore/XYCore.h"
-#include"Log/XYlog.h"
+#include"Core/Core.h"
+#include"Log/XYLog.h"
 
 namespace X_Y{
 	//这里的buffer内容几乎完全复刻hazel的实现

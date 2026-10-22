@@ -1,5 +1,5 @@
-﻿#include"Render/OpenGL/OpenGLRenderAPI.h"
-#include"XCore/XYTools.h"
+﻿#include"Render/src/OpenGL/OpenGLRenderAPI.h"
+#include"Core/Core.h"
 namespace X_Y {
 
     void OpenGLMessageCallback(

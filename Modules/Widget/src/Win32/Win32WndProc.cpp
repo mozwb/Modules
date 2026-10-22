@@ -1,13 +1,13 @@
 #include "Win32/Win32WndProc.h"
 #include "Win32/Win32Globals.h"
-#include "BaseWin.h"
+#include "Widget/BaseWin.h"
 #include "Widget/Application.h"
-#include "Movement/movements.h"
+#include "Movement/Movements.h"
 #include "Movement/AppMovement.h"
 #include "Movement/KeyMovement.h"
 #include "Movement/MouseMovement.h"
-#include "Canvas.h"
-#include "Dpi.h"
+#include "Widget/Canvas.h"
+#include "Widget/Dpi.h"
 
 namespace X_Y::Win32
 {

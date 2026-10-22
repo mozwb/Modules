@@ -1,9 +1,10 @@
 ﻿#pragma once
 #ifdef XY_DEBUG
-#include "XCore/XLog/LogConfigure.h"
+#include "Log/Log.h"
 #include "DataStoreDevice.h"
 namespace X_Y
 {
+	//仅供DEBUG时测试用
 	template <typename T>
 	using LogBase = LogConfigure::LogConfigure<T>;
 	using LogConfigure::DEVICE;
@@ -109,6 +110,7 @@ namespace X_Y
 #define XDEBUG(...)
 #define XERROR(...)
 #define XFATAL(...)
+#define XWARN(...)
 #define XY_CORE_ASSERT(condition, ...)
 #define XY_DEBUGBREAK()
 #define XY_PROFILE_FUNCTION

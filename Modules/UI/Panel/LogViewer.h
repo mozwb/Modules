@@ -3,7 +3,7 @@
 #include "UI/Component/ListBox.h"
 #include "UI/Component/ScrollArea.h"
 #include "UI/Component/TextInput.h"
-#include "XCore/Memory/LoopQueue.h"
+#include "Memory/Memory.h"
 #include <string>
 #include <vector>
 #include <memory>

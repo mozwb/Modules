@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "Movements.h"
-#include "XCore/Input/Input.h"
+#include "Input/Input.h"
 namespace X_Y
 {
 	using KeyCode = Input::KeyCode;

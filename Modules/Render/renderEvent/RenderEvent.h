@@ -1,5 +1,5 @@
-﻿#pragma once
-#include"Movement/movements.h"
+#pragma once
+#include"Movement/Movements.h"
 #include"GraphicsContext/GraphicsContext.h"
 #define RENDEREVENT_CLASS_TYPE(type) static RenderType GetStaticType() { return RenderType::type; }\
 								virtual RenderType GetType() const override { return GetStaticType(); }\

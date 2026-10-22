@@ -1,6 +1,6 @@
 #include "Widget/Font.h"
 #include "Win32/FontFreeType.h"
-#include "Dpi.h"
+#include "Widget/Dpi.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <vector>

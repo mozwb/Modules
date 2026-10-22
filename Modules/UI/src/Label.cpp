@@ -1,4 +1,4 @@
-#include "Component/Label.h"
+#include "UI/Component/Label.h"
 #include "Widget/FontLibrary.h"
 
 namespace X_Y {

@@ -1,6 +1,6 @@
-﻿#include "Render/OpenGL/OpenGLTexture.h"
-#include "XCore/Decoder/Blueprint/Image.h"
-#include "Log/XYlog.h"
+﻿#include "Render/src/OpenGL/OpenGLTexture.h"
+#include "Decoder/Image.h"
+#include "Log/XYLog.h"
 
 #include <glad/glad.h>
 

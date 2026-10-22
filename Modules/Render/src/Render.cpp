@@ -1,5 +1,5 @@
-﻿#include "Render.h"
-#include "Buffer.h"
+﻿#include "Render/Render.h"
+#include "Render/Buffer.h"
 
 namespace X_Y {
     Scope<Render::SceneData> Render::s_SceneData = CreateScope<Render::SceneData>();

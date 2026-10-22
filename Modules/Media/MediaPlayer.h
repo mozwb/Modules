@@ -1,6 +1,6 @@
 #pragma once
 
-#include "XCore/Decoder/Blueprint/Media.h"
+#include "Decoder/Media.h"
 
 #include <filesystem>
 #include <memory>

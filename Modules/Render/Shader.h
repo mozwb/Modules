@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include<XCore/XYCore.h>
+#include<Core/Core.h>
 #include<Render/renderMath/RenderMath.h>
 #include<unordered_map>
 #include<string>

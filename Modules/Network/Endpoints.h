@@ -2,7 +2,7 @@
 
 #include "Network/NetworkError.h"
 #include "Network/SocketHandle.h"
-#include "XCore/Memory/Buffer.h"
+#include "Memory/Memory.h"
 
 #include <cstddef>
 #include <cstdint>

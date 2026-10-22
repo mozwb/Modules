@@ -1,6 +1,6 @@
 ﻿#include "Model/ModelGenerator.h"
-#include "XCore/Memory/Buffer.h"
-#include "XCore/FilesSystem/FilesSystem.h"
+#include "Memory/Memory.h"
+#include "Files/Files.h"
 #include <sstream>
 #include <iomanip>
 

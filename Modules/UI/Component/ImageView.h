@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Component.h"
-#include "XCore/Decoder/Blueprint/Image.h"
+#include "Decoder/Image.h"
 
 namespace X_Y
 {

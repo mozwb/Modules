@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include"renderMath/renderMath.h"
-#include"XCore/XYCore.h"
+#include"Core/Core.h"
 #include"GraphicsContext/GraphicsType.h"
 #include"Render/VertexArray.h"
 namespace X_Y {

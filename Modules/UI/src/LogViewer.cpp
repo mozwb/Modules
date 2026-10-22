@@ -1,6 +1,6 @@
 #include "../panel/LogViewer.h"
 #include "DataStore/DataStore.h"
-#include "XCore/Timer/Timer.h"
+#include "Timer/Timer.h"
 #include "Widget/BaseWin.h"
 #include "Widget/FontLibrary.h"
 #include <algorithm>

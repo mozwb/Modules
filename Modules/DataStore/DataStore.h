@@ -1,6 +1,6 @@
-﻿#pragma once
-#include "XCore/Memory/Buffer.h"
-#include "XCore/FilesSystem/FilesSystem.h"
+#pragma once
+#include "Memory/Memory.h"
+#include "Files/Files.h"
 #include <string>
 #include <unordered_map>
 #include <vector>

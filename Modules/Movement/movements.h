@@ -1,5 +1,5 @@
 #pragma once
-#include "XCore/XYCore.h"
+#include "Core/Core.h"
 #include <functional>
 #include <vector>
 #include <sstream>

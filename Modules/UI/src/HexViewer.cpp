@@ -3,7 +3,7 @@
 #include "UI/Component/ScrollArea.h"
 #include "UI/Component/horizontal.h"
 #include "Widget/FontLibrary.h"
-#include "XCore/Memory/Buffer.h"
+#include "Memory/Memory.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

@@ -1,6 +1,6 @@
 ﻿#include<imgui/ImGuiLayer.h>
 #include<imgui_internal.h>
-#include<Widget/Win32/Win32Globals.h>
+#include<Widget/src/Win32/Win32Globals.h>
 
 // ImGui_ImplWin32_WndProcHandler 声明在头文件中被 #if 0 禁用，需手动 extern
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);

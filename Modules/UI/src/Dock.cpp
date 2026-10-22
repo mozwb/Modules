@@ -1,5 +1,5 @@
 #include "../dock/Dock.h"
-#include "DockLayout/DockLayout.h"
+#include "UI/DockLayout/DockLayout.h"
 #include "Widget/FontLibrary.h"
 #include "../UiCore/UINode.h"
 #include <algorithm>

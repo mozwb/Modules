@@ -1,11 +1,12 @@
 #pragma once
-#include "XCore/XLog/LogConfigure.h"
+#include "Log/Log.h"
 #include "DataStore/DataStore.h"
-#include "XCore/FilesSystem/FilesSystem.h"
+#include "Files/Files.h"
 
 namespace X_Y
 {
 
+    //仅供DEBUG时测试用
     // ── DataStoreDevice ──
     // Log 设备：每次 Log 调用时追加到 DataStore 管理的固定容量 Buffer
     // 写满时自动 flush 到文件后重置，从头继续写

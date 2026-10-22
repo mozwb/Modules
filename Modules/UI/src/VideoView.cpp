@@ -1,4 +1,4 @@
-#include "Component/VideoView.h"
+#include "UI/Component/VideoView.h"
 
 #include <algorithm>
 #include <cmath>

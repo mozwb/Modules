@@ -1,7 +1,7 @@
-#include "BaseWin.h"
-#include "Canvas.h"
-#include "XCore/Input/Input.h"
-#include "Dpi.h"
+#include "Widget/BaseWin.h"
+#include "Widget/Canvas.h"
+#include "Input/Input.h"
+#include "Widget/Dpi.h"
 #include <set>
 #ifdef XY_PLATFORM_WINDOWS
 #include <windows.h>

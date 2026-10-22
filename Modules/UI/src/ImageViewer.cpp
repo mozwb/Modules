@@ -2,7 +2,7 @@
 
 #include "UI/Component/ImageView.h"
 #include "UI/Component/Label.h"
-#include "XCore/Decoder/Blueprint/Image.h"
+#include "Decoder/Image.h"
 
 #include <string>
 #include <utility>

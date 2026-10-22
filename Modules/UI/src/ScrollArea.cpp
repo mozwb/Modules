@@ -1,4 +1,4 @@
-#include "Component/ScrollArea.h"
+#include "UI/Component/ScrollArea.h"
 
 namespace X_Y
 {

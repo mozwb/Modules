@@ -1,7 +1,7 @@
 ﻿#include "Win32/WindowImplWin32.h"
 #include "Win32/Win32Globals.h"
-#include "Canvas.h"
-#include "Dpi.h"
+#include "Widget/Canvas.h"
+#include "Widget/Dpi.h"
 #include <windows.h>
 #include <ole2.h>
 #include <shlobj.h>

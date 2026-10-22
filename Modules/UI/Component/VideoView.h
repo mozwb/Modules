@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Component.h"
-#include "XCore/Decoder/Blueprint/Media.h"
+#include "Decoder/Media.h"
 
 #include <mutex>
 

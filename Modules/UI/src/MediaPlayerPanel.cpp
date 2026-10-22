@@ -3,7 +3,7 @@
 #include "UI/Component/Button.h"
 #include "UI/Component/Label.h"
 #include "UI/Component/VideoView.h"
-#include "XCore/Timer/Timer.h"
+#include "Timer/Timer.h"
 #include "Widget/FontLibrary.h"
 
 #include <algorithm>
