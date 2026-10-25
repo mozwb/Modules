@@ -8,54 +8,6 @@
 #include "Log/XYLog.h"
 namespace X_Y
 {
-	// 窗口发送消息->winproc转化成某种行为，放入消息队列--
-	//  ->分发器从队列中取出某种行为，调用所有监听该行为的函数
-	// 消息队列和分发器都是全局，程序所持有
-
-	// 添加动作（程序行为,窗口行为，鼠标键盘行为），或者说系统事件
-	// 类型固定
-	// 设计希望窗口具有某些行为，这些行为将触发逻辑事件，
-	enum MovementCategory
-	{
-		None = 0,
-		MTApplication = BIT(0),
-		MTInput = BIT(1),
-		MTKeyboard = BIT(2),
-		MTMouse = BIT(3),
-		MTMouseButton = BIT(4),
-		MTWindow = BIT(5)
-	};
-	enum class MovementType
-	{
-		None = 0,
-		AppTick,
-		AppUpdate,
-		AppRender,
-		WindowClose,
-		WindowResize,
-		WindowFocus,
-		WindowMoved,
-		WindowDestroy,
-		WindowPaint,
-		KeyPressed,
-		KeyReleased,
-		KeyTyped,
-		MouseButtonPressed,
-		MouseButtonReleased,
-		MouseMoved,
-		MouseScrolled,
-		WindowDragBegin,
-		WindowDragEnd
-
-	};
-#define MOVEMENT_CLASS_TYPE(type)                                             \
-	static MovementType GetStaticType() { return MovementType::type; }        \
-	virtual MovementType GetType() const override { return GetStaticType(); } \
-	virtual const char *GetName() const override { return #type; }
-
-#define MOVEMENT_CLASS_CATEGORY(category) \
-	virtual int GetCategoryFlags() const override { return category; }
-
 	using MovementSender = void *;	 // 发起者（窗口/任意对象）
 	using MovementReceiver = void *; // 接收者（任意对象）
 	struct XMovement
@@ -340,6 +292,53 @@ namespace X_Y
 	private:
 		std::vector<Layer *> m_Layers;
 	};
+
+	// 窗口发送消息->winproc转化成某种行为，放入消息队列--
+	//  ->分发器从队列中取出某种行为，调用所有监听该行为的函数
+	// 消息队列和分发器都是全局，程序所持有
+
+	// 添加动作（程序行为,窗口行为，鼠标键盘行为），或者说系统事件
+	// 类型固定
+	// 设计希望窗口具有某些行为，这些行为将触发逻辑事件，
+	enum MovementCategory
+	{
+		None = 0,
+		MTApplication = BIT(0),
+		MTInput = BIT(1),
+		MTKeyboard = BIT(2),
+		MTMouse = BIT(3),
+		MTMouseButton = BIT(4),
+		MTWindow = BIT(5)
+	};
+	enum class MovementType
+	{
+		None = 0,
+		AppTick,
+		AppUpdate,
+		AppRender,
+		WindowClose,
+		WindowResize,
+		WindowFocus,
+		WindowMoved,
+		WindowDestroy,
+		WindowPaint,
+		KeyPressed,
+		KeyReleased,
+		KeyTyped,
+		MouseButtonPressed,
+		MouseButtonReleased,
+		MouseMoved,
+		MouseScrolled,
+		WindowDragBegin,
+		WindowDragEnd
+	};
+#define MOVEMENT_CLASS_TYPE(type)                                             \
+	static MovementType GetStaticType() { return MovementType::type; }        \
+	virtual MovementType GetType() const override { return GetStaticType(); } \
+	virtual const char *GetName() const override { return #type; }
+
+#define MOVEMENT_CLASS_CATEGORY(category) \
+	virtual int GetCategoryFlags() const override { return category; }
 	// 窗口的行为类型，携带自己的消息
 	// 窗口只负责将行为发送给消息队列
 	class Movement : public XMovement

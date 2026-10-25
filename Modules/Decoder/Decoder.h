@@ -2,7 +2,7 @@
 
 /*
 Decoder.h
-version 1.0.7
+version 0.0.0
 
 解码基础设施：通用解码器分派模板 + 文本编码转换。
 这是 Decoder 模块唯一的公开头。

@@ -2,7 +2,7 @@
 
 /*
 Memory.h
-version 1.0.5
+version 0.0.0
 
 内存模块唯一公开头：分配头布局、后端枚举、统计、门面（Memory）、
 以及两个常用容器（Buffer / BufferView / LoopQueue）。
