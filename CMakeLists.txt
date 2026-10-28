@@ -85,7 +85,13 @@ set(XY_MODULE_ORDER
     Input)
 
 foreach(_m IN LISTS XY_MODULE_ORDER)
-    add_subdirectory("Modules/${_m}")
+    # 部分检出 / .gitignore 里的模块目录可能没有 CMakeLists.txt（比如 Modules/DataStore），
+    # 没有就跳过，别让整个 configure 失败；依赖它的模块会自己用 TARGET 检查。
+    if(EXISTS "${PROJECT_SOURCE_DIR}/Modules/${_m}/CMakeLists.txt")
+        add_subdirectory("Modules/${_m}")
+    else()
+        message(STATUS "${_m}: 没有 CMakeLists.txt，跳过")
+    endif()
 endforeach()
 
 # ── 可执行产物 ───────────────────────────────────────────────────────────────
