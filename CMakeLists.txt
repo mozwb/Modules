@@ -77,6 +77,7 @@ set(XY_MODULE_ORDER
     Memory
     Timer
     Math
+    Terminal
     Log
     Files
     DataStore

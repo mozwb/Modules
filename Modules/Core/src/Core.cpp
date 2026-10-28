@@ -16,6 +16,11 @@ namespace X_Y::Utils
     {
         return s.find(substr) != std::string::npos;
     }
+
+    bool IsSpace(char c)
+    {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+    }
     std::string ToLower(const std::string &s)
     {
         std::string result = s;

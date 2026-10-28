@@ -39,7 +39,7 @@ X_Y 的零依赖基础模块：字符串工具、类型工具、所有权别名�
 #include <type_traits>
 #include <utility>
 #include <vector>
-
+#include <iostream>
 namespace X_Y
 {
 
@@ -56,6 +56,7 @@ namespace X_Y
         bool equals_ignore_case(const std::string &s1, const std::string &s2);
         bool IsNumber(const std::string &s);
         bool IsBlank(const std::string &s);
+        bool IsSpace(char c);
 
         // ── 转换 ──
         std::string ToLower(const std::string &s);
