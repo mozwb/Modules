@@ -2,9 +2,9 @@
 #include "../DockLayout/DockLayout.h"
 #include "UI/dock/Dock.h"
 #include "../UiCore/UIEvent.h"
-#include "Movement/MouseMovement.h"
-#include "Movement/KeyMovement.h"
-#include "Widget/Application.h"
+#include "Widget/Movement/MouseMovement.h"
+#include "Widget/Movement/KeyMovement.h"
+#include "Widget/EventHelpers.h"
 
 namespace X_Y
 {

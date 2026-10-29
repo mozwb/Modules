@@ -12,6 +12,12 @@
 #include <string>
 #include <utility>
 
+// Media -> Decoder 会把 <windows.h> 带进来，DrawText 会被宏成 DrawTextW；
+// Canvas::DrawText 是普通成员函数，这里把宏消掉。
+#ifdef DrawText
+#undef DrawText
+#endif
+
 namespace X_Y
 {
 	class MediaSeekBar final : public Component

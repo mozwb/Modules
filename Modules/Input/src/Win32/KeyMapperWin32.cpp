@@ -1,4 +1,4 @@
-#include "../../../Input/KeyMapper.h"
+#include "../KeyMapper.h"
 #include <array>
 #include <atomic>
 #include <condition_variable>

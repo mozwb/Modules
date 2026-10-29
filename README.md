@@ -22,10 +22,12 @@ Modules
 ├── Middle/            #   中间数据结构（MeshData）
 │
 │
-├── GraphicsContext/   #   OpenGL 上下文封装
-├── Movement/          #   事件系统（信号槽 + 队列 + 分发器）
+├── GraphicsContext/   #   OpenGL 上下文封装（从 UnSureEnable 恢复的独立模块）
+├── APP/               #   应用层内核：Loop + EventBus + Application + DLL 微程序
 ├── Widget/                   # 🏢 上层应用基础设施（独立 lib）
-│   ├── Application/       #   应用生命周期、消息循环
+│   ├── Movement/          #   具体事件类型（窗口 / 键盘 / 鼠标）
+│   ├── EventHelpers.h     #   Connect / connect / disConnect 便利函数
+│   ├── WindowHost.h       #   窗口生命周期（主窗口 / 托管 / 退出清理）
 │   └── Widget/            #   窗口系统（Win32 封装 + XWidget）+ Canvas/Font/DPI 平台抽象
 ├── UI/                #   自研原生 UI（Container/Component 两层）+ 原生组件
 │
@@ -37,7 +39,7 @@ Modules
 ├── Physical/                    # 轻量物理引擎
 │
 ├── MD/                    # 📖 模块文档（Log、Window 等）
-├── vendor/                #   第三方库（含 stb_image 和 FFmpeg 源码）
+├── vendor/                #   第三方库（自带 CMake 自动接入，接线脚本在 vendor/cmake/）
 
 ```
 ---

@@ -1,11 +1,11 @@
 #include "Win32/Win32WndProc.h"
 #include "Win32/Win32Globals.h"
 #include "Widget/BaseWin.h"
-#include "Widget/Application.h"
-#include "Movement/Movements.h"
-#include "Movement/AppMovement.h"
-#include "Movement/KeyMovement.h"
-#include "Movement/MouseMovement.h"
+#include "APP/Application.h"
+#include "Widget/Movement/Movements.h"
+#include "Widget/Movement/AppMovement.h"
+#include "Widget/Movement/KeyMovement.h"
+#include "Widget/Movement/MouseMovement.h"
 #include "Widget/Canvas.h"
 #include "Widget/Dpi.h"
 
@@ -22,7 +22,7 @@ namespace X_Y::Win32
             return true;
 
         BaseWin *pThis = nullptr;
-        auto *app = Application::instance();
+        auto *app = App::Application::instance();
 
         // 2. 窗口创建时：绑定 C++ 对象与 HWND，记录初始尺寸
 

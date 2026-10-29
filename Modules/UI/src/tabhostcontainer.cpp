@@ -1,6 +1,6 @@
 #include "UI/Container/tabhostcontainer.h"
 #include "UI/DockLayout/DockLayout.h"
-#include "Widget/Application.h"
+#include "Widget/WindowHost.h"
 namespace X_Y
 {
     void TabHostContainer::SetDockLayout(DockLayout *layout)
@@ -64,11 +64,11 @@ namespace X_Y
         //    走到这里说明还没人接管，panel 仍在本函数手里。
         //
         // ⚠️ 窗口一律 new（约定）：它的回收由 XWidget 收到 WindowDestroy 时
-        //    自动完成（→ Application 延迟回收队列 → ProcessEvents 末尾 flush），
+        //    自动完成（→ App::Application 延迟回收队列 → ProcessEvents 末尾 flush），
         //    这里【不要】再手动 delete —— 老代码两处 delete 只销毁了 HWND，
         //    C++ 对象（含它的 m_Layout→Dock→Panel 整棵树）根本没析构，反而更漏。
         auto *window = new TabContainer();
-        Application::instance()->Own(window);
+        WindowHost::Instance().Own(window);
         window->SetWindowTitle(title);
         window->setSize(700, 500);
 

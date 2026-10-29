@@ -1,7 +1,6 @@
 #pragma once
-#include "Movement/Movements.h"
-#include "Movement/AppMovement.h"
-#include "Application.h"
+#include "Widget/Movement/Movements.h"
+#include "Widget/Movement/AppMovement.h"
 #include "BaseWin.h"
 #include <string>
 #include <GraphicsContext/GraphicsContext.h>
@@ -15,7 +14,7 @@ namespace X_Y {
     // ── 存储位置标记 ──
     //
     // 为什么需要它：窗口原生销毁时（WM_DESTROY → WindowDestroy 事件），
-    // XWidget 会把这个对象交给 Application 的延迟回收队列，最终执行
+    // XWidget 会把这个对象交给 App::Application 的延迟回收队列，最终执行
     // `delete this`。**若对象其实建在栈上，这一下 delete 打在栈内存上必崩。**
     //
     // 所以创建时就要说清楚"我是怎么建的"：
@@ -100,7 +99,7 @@ namespace X_Y {
         //   自毁自动生效，不用改任何平台代码。
         //
         // ⚠️ 不能当场 delete this：本函数跑在 dispatcher 的绑定遍历中，
-        //    ProcessEvents 也还在栈上，都持有 this。所以只向 Application
+        //    ProcessEvents 也还在栈上，都持有 this。所以只向 App::Application
         //    登记一个延迟回收动作，等本轮事件派发结束后的安全点执行。
         void OnNativeDestroyed();
 

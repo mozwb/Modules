@@ -1,5 +1,10 @@
 #include "Widget/XWidget.h"
+
+#include "APP/Application.h"
 #include "Log/XYLog.h"
+#include "Widget/EventHelpers.h"
+#include "Widget/WindowHost.h"
+
 #include <cstdint> // uintptr_t（日志里打印对象地址用）
 
 namespace X_Y
@@ -10,7 +15,7 @@ namespace X_Y
     {
         XDEBUG("XWidget 构造执行,parent={},storage={}",
                (uintptr_t)parent, storage == StorageTag::Heap ? "Heap" : "Stack")
-        auto app = Application::instance();
+        auto *app = App::Application::instance();
         if (!app)
         {
             XY_CORE_ASSERT(false, "Application instance is null!");
@@ -27,7 +32,7 @@ namespace X_Y
         {
             // 顶层窗口：关它就关它自己。
             // ⚠️ "关哪个窗口退出程序"不再由"谁先建"决定 —— 改由
-            //    Application::SetMainWindow 显式指定（见 Application.h）。
+            //    WindowHost::SetMainWindow 显式指定（见 Widget/WindowHost.h）。
             connect(this, MovementType::WindowClose, this, &XWidget::destroy);
         }
 
@@ -73,10 +78,9 @@ namespace X_Y
         }
         m_RecycleQueued = true;
 
-        // 从 Application 的托管名单摘除：本对象即将退场，
-        // 不该再被退出清理（Application::Shutdown）当成"活着"去 destroy。
-        if (Application *app = Application::instance())
-            app->ForgetOwnedWindow(this);
+        // 从 WindowHost 的托管名单摘除：本对象即将退场，
+        // 不该再被退出清理（WindowHost::Shutdown）当成"活着"去 destroy。
+        WindowHost::Instance().ForgetOwnedWindow(this);
 
         // ════════════════════════════════════════════════════════
         // 栈对象：只退订，【绝不 delete】
@@ -95,7 +99,7 @@ namespace X_Y
         XDEBUG("[窗口回收] {} @{} 是【堆对象】收到 WindowDestroy → 登记延迟回收",
                toString(), (uintptr_t)this)
 
-        Application *app = Application::instance();
+        App::Application *app = App::Application::instance();
         if (!app)
         {
             // 没有 Application（异常场景，如已析构）→ 退回直接删除。

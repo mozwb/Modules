@@ -82,7 +82,12 @@ set(XY_MODULE_ORDER
     Decoder
     Input
     Terminal
-    Log)
+    Log
+    GraphicsContext
+    APP
+    Media
+    Widget
+    UI)
 
 foreach(_m IN LISTS XY_MODULE_ORDER)
     # 部分检出 / .gitignore 里的模块目录可能没有 CMakeLists.txt（比如 Modules/DataStore），

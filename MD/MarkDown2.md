@@ -357,10 +357,10 @@ WinCore负责的也很简单，因为windows需要注册窗口类，它只负责
 #pragma once
 #include"Log/include/XYLog.h"
 #include"Application/include/Application.h"
-#include"Movement/include/movements.h"
-#include"Movement/include/AppMovement.h"
-#include"Movement/include/KeyMovement.h"
-#include"Movement/include/MouseMovement.h"
+#include"Widget/Movement/Movements.h"
+#include"Widget/Movement/AppMovement.h"
+#include"Widget/Movement/KeyMovement.h"
+#include"Widget/Movement/MouseMovement.h"
 #include"Input/include/MapCode.h"
 #include"BaseWin.h"
 #ifdef XY_PLATFORM_WINDOWS

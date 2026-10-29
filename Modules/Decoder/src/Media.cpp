@@ -624,7 +624,7 @@ namespace X_Y::Decode
 			return m_Impl->Fail(MediaError::InvalidPath, "Media file path is empty");
 
 		auto stream = std::make_unique<FileStream>();
-		if (!stream->Open(filepath))
+		if (!stream->Open(filepath.string()))
 			return m_Impl->Fail(MediaError::FileNotFound, "Media file does not exist: " + filepath.string());
 
 		m_Impl->OwnedStream = std::move(stream);

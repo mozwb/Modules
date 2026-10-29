@@ -5,6 +5,7 @@
 #include <set>
 #ifdef XY_PLATFORM_WINDOWS
 #include <windows.h>
+#include "Win32/Win32Class.h"
 #include "Win32/Win32Globals.h"
 #endif
 
@@ -14,6 +15,18 @@ namespace X_Y
     BaseWin::BaseWin()
         : m_Impl(PlatformFactory::CreateWindowImpl())
     {
+#ifdef XY_PLATFORM_WINDOWS
+        // 窗口类 / DPI 只需要进程级初始化一次。以前依赖 Entry.cpp 的
+        // WinMain 或 Widget/PlatformLoop 来做，现在 BaseWin 自己兜底：
+        // 控制台程序直接 new XWidget 也能建窗。
+        static bool s_PlatformBooted = false;
+        if (!s_PlatformBooted)
+        {
+            Dpi::DeclareAware();
+            Win32::RegisterWinClass(::GetModuleHandle(nullptr));
+            s_PlatformBooted = true;
+        }
+#endif
     }
 
     BaseWin::~BaseWin()
