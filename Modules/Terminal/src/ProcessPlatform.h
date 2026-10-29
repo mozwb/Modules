@@ -7,5 +7,6 @@
 namespace X_Y::Process::Detail
 {
     Result RunPlatform(const std::string &program,
-                       const std::vector<std::string> &arguments);
+                       const std::vector<std::string> &arguments,
+                       const Options &options);
 }

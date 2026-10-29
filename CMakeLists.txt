@@ -77,12 +77,12 @@ set(XY_MODULE_ORDER
     Memory
     Timer
     Math
-    Terminal
-    Log
     Files
     DataStore
     Decoder
-    Input)
+    Input
+    Terminal
+    Log)
 
 foreach(_m IN LISTS XY_MODULE_ORDER)
     # 部分检出 / .gitignore 里的模块目录可能没有 CMakeLists.txt（比如 Modules/DataStore），

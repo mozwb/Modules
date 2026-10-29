@@ -1,7 +1,7 @@
 # Terminal —— 终端能力层（设计稿）
 
-> 版本 0.0.0 · 2026-10-28 · 状态：**设计已确认**；Terminal 输出 / 屏幕、Command、Process、Shell v1 已落地，
-> raw mode 还没写
+> 版本 0.0.0 · 2026-10-29 · 状态：**设计已确认**；Terminal 输出 / 屏幕、Command、
+> Process（含输出捕获）、Shell v1 + 行编辑、RawMode / ReadKey 已落地；Tab 补全 / 多行还没写
 > 位置：`Modules/Terminal` · 依赖：`Core` · 上一层：`Command` / `Shell`
 
 ---
@@ -58,7 +58,7 @@ Log、Shell、构建器都站在它上面，不再各自手写 `\x1b[`。
 - `AttachConsole` / `AllocConsole` → 属于 GUI 子系统程序的决定（`Application` / `Widget`）
 - 中文、emoji 的显示宽度计算 → 等真要画表格时再说
 - 终端模拟器、多路会话、鼠标跟踪、备用屏幕 → 暂时不碰
-- 读键 / raw mode → 第一版之后，仍在 Terminal 里，单独文件
+- 读键 / raw mode → 归 `Modules/Input` 的 `Console.h`（2026-10-28 调整）
 
 依赖只要 `Core`（其实这个模块连 `Core` 都可以不用，但按仓库习惯留着）。
 **不依赖 Log**，避免和「Log 以后接 Terminal」形成环。
@@ -118,9 +118,12 @@ Modules/Terminal/
     └── Posix/ProcessPosix.cpp
 ```
 
+- 控制台输入不在这个模块：在 `Modules/Input` 的 `Console.h` +
+  `src/Console/{Win32,Posix}`，单独一个 `InputConsole` 目标（全平台、不依赖 Decoder），
+  Terminal 依赖它。键码复用 `Input::Key`，不再另造一套。
 - `Ansi.cpp` 两个平台共用；平台目录只放系统调用。
-- 四个公开头分属 `X_Y::Terminal`、`X_Y::Command`、`X_Y::Process`、`X_Y::Shell`，
-  共用同一个 `Terminal` 目标，链接一次就够；层还在，只是不再各出一个库。
+- 四个公开头共用同一个 `Terminal` 目标，链接一次就够；命名空间分别是
+  `X_Y::Terminal`、`X_Y::Command`、`X_Y::Process`、`X_Y::Shell`。
 - `CMakeLists.txt` 用 `xy_module(... EXCLUDE ...)` 排掉对方的平台目录（现成机制）。
 - 固定 `STATIC`：控制台模式是进程级状态，跟 exe 走；暂时不做 dll。
 
@@ -132,13 +135,14 @@ else()
     set(_exclude "src/Win32/")
 endif()
 
-xy_module(Terminal STATIC DEPS Core EXCLUDE "${_exclude}")
+xy_module(Terminal STATIC DEPS Core InputConsole EXCLUDE "${_exclude}")
 ```
 
-根 `CMakeLists.txt` 的 `XY_MODULE_ORDER` 里放在 `Log` 前面（以后 Log 要靠它判断颜色）：
+根 `CMakeLists.txt` 的 `XY_MODULE_ORDER` 里，Input 在 Terminal 前（要建 InputConsole），
+Decoder 又在 Input 前（Windows 的窗口/音频部分要用）：
 
 ```cmake
-Core Memory Timer Math Terminal Log Files DataStore Decoder Input
+Core Memory Timer Math Files DataStore Decoder Input Terminal Log
 ```
 
 ---
@@ -328,49 +332,65 @@ namespace X_Y::Command
 }
 ```
 
-### Process（外部程序，已落地）
+### Process（外部程序，已落地，含输出捕获）
 
 ```cpp
 namespace X_Y::Process
 {
+    struct Options
+    {
+        bool CaptureStdout = false;
+        bool CaptureStderr = false;
+    };
+
     struct Result
     {
         bool        Started  = false;
         int         ExitCode = -1;
         std::string Error;
+        std::string StdOut;   // CaptureStdout 时有效
+        std::string StdErr;   // CaptureStderr 时有效
         bool Ok() const;
     };
 
-    Result Run(std::string_view program, const std::vector<std::string> &arguments);
+    Result Run(std::string_view program,
+               const std::vector<std::string> &arguments,
+               Options options = {});
 }
 ```
 
 - Windows 用 `CreateProcessW`：参数 UTF-8 → UTF-16，命令行按 Windows 规则加引号。
 - POSIX 用 `fork + execvp`：CLOEXEC 错误管道，exec 失败能把 errno 带回父进程。
-- 继承 stdin / stdout / stderr、环境变量、当前目录；阻塞到子进程退出。
-- 不捕获输出、不超时、不解释 shell 语法；要捕获再加 `Capture`。
+- 默认继承 stdin / stdout / stderr、环境变量、当前目录；阻塞到子进程退出。
+- `CaptureStdout/Stderr` 打开时建 pipe，子进程输出不再进终端，两路各起一个读线程
+  并发排空，避免 pipe 缓冲满导致死锁；结果在 `StdOut/StdErr`，原样字节。
+- 不流式回调、不超时、不解释 shell 语法；先全部读进内存。
 
 还开着的口子：
 
-- **输出归谁**：handler 自己通过 `Terminal::Write` 写；外部进程继承句柄。
-  以后要捕获输出（测试、日志）再给 Process 加 `Capture` 选项。
+- **输出归谁**：默认继承句柄，输出直接进终端；要拿文本就开 Capture。
+  以后要流式输出（构建器实时刷进度）再加逐块回调。
 - **Process 要不要独立成模块**：现在跟 Terminal 放一起，构建器要用也直接 include；
   真长胖了再拆，公开头不用动。
 
 ---
 
-## 10. 最上层：Shell（v1 已落地）
+## 10. 最上层：Shell（v1 + 行编辑）
 
-Shell 只负责循环和提示符，不认识具体命令；输入用 `std::getline`。
+Shell 负责循环、提示符和行编辑，不认识具体命令。交互终端用 `Console::ReadKey`
+自己维护 buffer / 光标 / 历史；stdin 被重定向时退回 `std::getline`，不打提示符。
 
 做到：
 
 - `Shell(Command::Registry &)`、`Run()`、`Execute(line)`、`Stop()`、`SetPrompt()`
-- `Terminal::IsInteractive()`（stdin + stdout 都是终端）才打提示符；
-  管道喂命令时只有输出，方便测。
+- `Terminal::IsInteractive()` 且 ANSI 可用才走行编辑；否则 `getline` 兜底
+- 左右 / Home / End / Backspace / Delete；上下翻历史（最多 100 条，连续重复不记）
+- Ctrl+A/E 行首行尾，Ctrl+U/K 删到行首/行尾，Ctrl+W 删前一个词
+- Ctrl+C 取消当前行，Ctrl+D 空行退出，Ctrl+L 清屏重画
 - 内建 `help`、`exit [code]`、`quit [code]`；其他交给 Registry。
   `help/exit/quit` 是 Shell 自己的，注册同名命令会被拦截。
 - 错误打 `[error] ...`（红色，没颜色就纯文本）；返回最后一条命令的退出码。
+- 每读一行临时进 `RawMode`，读完立刻退出，执行外部命令前不会把 raw 状态带给子进程。
 
 ```cpp
 namespace X_Y::Shell
@@ -392,8 +412,23 @@ namespace X_Y::Shell
 
 不做：
 
-- 历史、方向键、Tab 补全、Ctrl+C -> 等 `ReadKey`
+- Tab 补全、多行编辑、输入法组合 -> 以后
+- 长行自动换行的重绘 -> 现在按单行处理
 - `cd`、管道、重定向 -> 以后
+
+### 原始输入（已落地，在 Input 模块）
+
+- `<Input/Console.h>`：`Console::RawMode` RAII + `Console::ReadKey()`。
+- 事件类型在 Input 层：`Input::KeyEvent` / `Input::KeyKind`，`Console::Key` 只是别名；
+  以后窗口输入也能返回同一种事件。
+- `KeyEvent`：Character / Control / Special / Eof / Unknown；
+  Special 的 `Code` 直接复用 `Input::Key`（方向键、Enter、Backspace、…），不再另造键码。
+  Ctrl+C/D/L 是 Control，`Text` 是 0x03 / 0x04 / 0x0C。
+- `InputConsole` 目标全平台、不依赖 Decoder；`Input` 目标仍是 Windows 窗口/音频。
+- Windows `ReadConsoleInputW`；Linux `termios` + ESC 序列 + UTF-8。
+- `RawMode` 只包住「读一行」；执行外部命令前必须退出，否则子进程继承关掉的行缓冲。
+- `KeyDemo`：真终端里按键看名字，Ctrl+D 退出；非 tty 直接退出。
+- 行编辑 / 历史还没接。
 
 ---
 
@@ -407,10 +442,11 @@ namespace X_Y::Shell
 | 4 | 屏幕操作（清屏 / 清行 / 光标 / 标题）（已完成，Windows 验证；Linux 待验） | 三种终端下不花屏 |
 | 5 | POSIX 后端（代码已写，待真 Linux 验证） | 你在服务器上跑一次 |
 | 6 | `Command`：Parse + Registry + 纯内建命令（已完成，并入 Terminal 模块） | 不依赖终端也能测 |
-| 7 | `Process` + Command 外部命令（已完成，Windows 验证；Linux 待验） | `cmd /c dir` / `ls` 能跑，退出码对 |
+| 7 | `Process` + Command 外部命令 + 输出捕获（已完成，Windows 验证；Linux 待验） | `cmd /c dir` / `ls` 能跑，StdOut/StdErr 和退出码对 |
 | 8 | `Shell` v1：提示符 / 内建 / 循环（已完成；历史、行编辑未做） | 管道喂命令能跑，退出码对 |
-| 9 | `Terminal` raw mode + `ReadKey` + 行编辑 / 历史 | Shell 能方向键、退格 |
-| 10 | 接 Log / Widget | 单独一步 |
+| 9 | `RawMode` + `ReadKey`（已完成，Windows 验证；Linux 待验） | KeyDemo 方向键 / 退格 / Ctrl+D 正确 |
+| 10 | Shell 行编辑 / 历史（已完成，Windows 验证；Linux 待验） | 方向键 / 历史 / Ctrl+C 正常，管道仍无提示符 |
+| 11 | 接 Log / Widget | 单独一步 |
 
 ---
 
@@ -426,4 +462,4 @@ namespace X_Y::Shell
 还缺：
 
 - Process 暂时放在 Terminal 模块里，构建器要用直接 include；真要独立再拆。
-- Shell 的行编辑 / 历史还没做，现在靠终端自己的 `getline`。
+- Shell 行编辑 / 历史已接；下一步是 Tab 补全 / 多行，或接 Log / Widget。

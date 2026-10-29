@@ -4,16 +4,26 @@
 Shell.h
 version 0.0.0
 
-最小交互壳：提示符 + std::getline + 分发。
+最小交互壳：提示符 + 行编辑 + 分发。
 读一行 -> Parse -> Shell 内建（help / exit / quit）或 Command::Registry。
+
+交互终端里用 <Input/Console.h> 的 ReadKey 自己维护 buffer / 光标 / 历史；
+stdin 被重定向时退回 std::getline，不打提示符，方便管道和脚本。
 
 ────────────────────────────────────────────────────────────────
 做
 
   Run()           从 stdin 读行，直到 EOF / exit / quit；返回最后一条命令的退出码。
   Execute(line)   执行一行；空行返回 -1；exit / quit 会设置停止标志。
-  SetPrompt()     提示符；只有 stdout 是 tty 时才真的打印。
+  SetPrompt()     提示符；只有 stdin + stdout 都是终端时才真的打印。
   Stop()          让 Run 在当前行结束后退出。
+
+交互编辑
+
+  左右 / Home / End / Backspace / Delete
+  上下翻历史（最多 100 条，连续重复不记）
+  Ctrl+A/E 行首行尾，Ctrl+U/K 删到行首/行尾，Ctrl+W 删前一个词
+  Ctrl+C 取消当前行，Ctrl+D 空行退出，Ctrl+L 清屏重画
 
 内建
 
@@ -23,9 +33,8 @@ version 0.0.0
 
 不做
 
-  历史、方向键、Tab 补全、Ctrl+C  -> 等 Terminal 的 ReadKey 那一版
-  cd、管道、重定向                 -> 以后
-  raw mode / 行编辑                -> 现在用 std::getline，交给终端自己回显
+  Tab 补全、多行编辑、输入法组合        -> 以后
+  cd、管道、重定向                       -> 以后
 
 ────────────────────────────────────────────────────────────────
 用法
@@ -44,8 +53,10 @@ version 0.0.0
 
 #include <Terminal/Command.h>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace X_Y::Shell
 {
@@ -71,9 +82,15 @@ namespace X_Y::Shell
         void PrintHelp();
         void PrintError(std::string_view message);
 
+        // 交互终端里读一行；返回 false 表示 EOF。
+        bool ReadLineInteractive(std::string &line);
+        void AddHistory(std::string line);
+        void RedrawLine(const std::string &buffer, std::size_t cursor) const;
+
         Command::Registry &_registry;
         std::string        _prompt        = "> ";
         bool               _stopRequested = false;
         int                _lastExitCode  = 0;
+        std::vector<std::string> _history;
     };
 }

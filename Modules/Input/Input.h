@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -12,6 +12,30 @@ namespace X_Y
 	public:
 		using KeyCode = unsigned int;
 		using MouseCode = unsigned int;
+
+		// 统一的按键事件：控制台（Console::ReadKey）和以后的窗口输入都可以返回它。
+		// Code 在 KeyKind::Special 时是 Input::Key 的值；
+		// Text 在 Character 时是 UTF-8，在 Control 时是 1 字节控制码。
+		enum class KeyKind : std::uint8_t
+		{
+			Character,
+			Control,
+			Special,
+			Eof,
+			Unknown
+		};
+
+		struct KeyEvent
+		{
+			KeyKind		 Type = KeyKind::Unknown;
+			unsigned int Code = 0;
+			std::string	 Text;
+
+			bool IsCharacter() const
+			{
+				return Type == KeyKind::Character;
+			}
+		};
 
 		enum class EatMode : unsigned char
 		{

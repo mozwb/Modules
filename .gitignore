@@ -2,13 +2,15 @@
 **/.vscode/
 **/build/
 **/dist/
-**/DataStore/
+
 #忽略当前目录某文件
 git_push.bat
 
 # ./dist_manifest.txt
 # 琉璃笔记（不纳入版本控制）
 _notes/
+#可能输出日志
+DataStore/
 
 # Python 缓存
 __pycache__/

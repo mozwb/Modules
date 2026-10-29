@@ -9,4 +9,9 @@ else()
     set(_exclude "src/Win32/")
 endif()
 
-xy_module(Terminal STATIC DEPS Core EXCLUDE "${_exclude}")
+# Process 捕获输出时用读线程并发排空 stdout/stderr。
+find_package(Threads REQUIRED)
+
+xy_module(Terminal STATIC DEPS Core InputConsole EXCLUDE "${_exclude}")
+
+target_link_libraries(Terminal PUBLIC Threads::Threads)
