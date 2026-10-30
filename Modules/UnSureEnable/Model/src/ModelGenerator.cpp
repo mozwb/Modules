@@ -1,6 +1,6 @@
-﻿#include "Model/ModelGenerator.h"
+#include "Model/ModelGenerator.h"
 #include "Memory/Memory.h"
-#include "Files/Files.h"
+#include "IO/Files.h"
 #include <sstream>
 #include <iomanip>
 

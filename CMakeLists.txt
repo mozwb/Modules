@@ -77,7 +77,7 @@ set(XY_MODULE_ORDER
     Memory
     Timer
     Math
-    Files
+    IO
     DataStore
     Decoder
     Input

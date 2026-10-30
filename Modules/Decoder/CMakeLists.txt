@@ -1,7 +1,7 @@
 # Decoder —— 文本编码 / 图片(stb) / 媒体(FFmpeg)。
 #
 # 定位：**工具侧模块**（将来编成 dll 由引擎装载）。切 SHARED 前同样要先解决
-# 内建符号来源，否则会把 Core/Memory/Files 各静态链一份进来。
+# 内建符号来源，否则会把 Core/Memory/IO 各静态链一份进来。
 #
 # 平台：Decoder/Decoder.h（公开头）现在直接 include <windows.h>，非 Windows 编不了，
 #       本平台先跳过；等把这个 include 从公开头挪走后就能跨过去。
@@ -13,8 +13,8 @@ if(NOT WIN32)
     return()
 endif()
 
-if(NOT TARGET Files)
-    message(STATUS "Decoder: 依赖 Files，而 Files 在本平台被跳过 → 一并跳过")
+if(NOT TARGET IO)
+    message(STATUS "Decoder: 依赖 IO，而 IO 在本平台被跳过 → 一并跳过")
     return()
 endif()
 
@@ -38,7 +38,7 @@ if(NOT _have_ffmpeg)
     message(STATUS "Decoder: 不含 FFmpeg，排除 src/Media.cpp")
 endif()
 
-xy_module(Decoder DEPS Core Memory Files EXCLUDE ${_exclude})
+xy_module(Decoder DEPS Core Memory IO EXCLUDE ${_exclude})
 
 target_link_libraries(Decoder PRIVATE xy_vendor_stb)
 

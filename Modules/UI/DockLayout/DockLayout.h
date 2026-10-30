@@ -3,7 +3,7 @@
 #include "../dock/Dock.h"
 #include "../UiCore/UIEvent.h"
 #include "Widget/Canvas.h"
-#include "Files/Files.h"
+#include "IO/Files.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>

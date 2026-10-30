@@ -2,35 +2,35 @@
 
 /*
 Files.h
-version 0.0.0
+version 0.0.1
 
-文件与字节流：路径操作、目录遍历、读写文件、以及统一的只读流接口。
-这是 Files 模块唯一的公开头。
+路径、目录遍历、整文件读写、文件对话框。
+
+IO 模块的公开头之一，另一半是 <IO/Stream.h>（读写字节流）。
+一个模块：Files.h 管「名字和整文件」，Stream.h 管「数据怎么一段段流」。
+
+流那几个名字（ReadStream / FileStream / MemoryStream）在 Stream.h 里，
+本头末尾留了 Stream / BufferStream 两个别名给老代码。
 
 ────────────────────────────────────────────────────────────────
 内容
   File / BuildTreeText   路径别名、目录树文本
   FilesSystem            静态文件操作 + 打开/保存对话框（仅 Windows）
   XPath                  类似 Python pathlib 的路径对象
-  Stream                 只读字节流接口
-  FileStream             从磁盘读（ifstream 藏在 Files.cpp 的 Impl 里）
-  BufferStream           把一段内存当流读
 
 ────────────────────────────────────────────────────────────────
 几条约定
 
 . 路径参数统一用 std::string_view 或 File(=std::filesystem::path)，
-  不用裸 const char*。FileStream 用 string_view 是为了不让 Stream 那部分
-  拖进 <filesystem>；需要传 path 时给 path.string()。
+  不用裸 const char*。
 . XPath 里那些短方法是内联的（都是 filesystem 的一行封装）；
-  真正干活的 ReadFileBinary / WriteFileBinary / 对话框在 src/Files.cpp。
-. Stream 是纯虚接口，调用方只认它，不关心字节从哪来。
+  真正干活的 ReadFileBinary / WriteFileBinary / 对话框在 src/FilesSystem.cpp。
 . 文件对话框是平台相关的，目前直接声明在公开头里（用 XY_PLATFORM_WINDOWS
   包住）。将来收进 engine 的平台层后，这里只留抽象接口。
 ────────────────────────────────────────────────────────────────
 用法
 
-    #include <Files/Files.h>
+    #include <IO/Files.h>
     using namespace X_Y;
 
     // 路径
@@ -41,26 +41,16 @@ version 0.0.0
     // 读写
     Buffer buf = FilesSystem::ReadFileBinary("assets/a.bin");
     FilesSystem::WriteFileBinary("assets/b.bin", buf);
-
-    // 流（大文件不想一次读进内存时用）
-    FileStream fs("assets/big.bin");
-    std::vector<uint8_t> chunk(4096);
-    StreamReadResult r;
-    while ((r = fs.Read(chunk.data(), chunk.size())).Status == StreamReadStatus::Data)
-    {
-        consume(chunk.data(), r.BytesRead);
-    }
 ────────────────────────────────────────────────────────────────
 */
 
-#include <cstdint>
 #include <filesystem>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <IO/Stream.h>
 #include <Memory/Memory.h>
 
 namespace X_Y
@@ -283,78 +273,10 @@ namespace X_Y
         File m_Path;
     };
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  字节流
-    // ═══════════════════════════════════════════════════════════════════════
-
-    enum class StreamReadStatus
-    {
-        Data,
-        EndOfStream,
-        Error
-    };
-
-    struct StreamReadResult
-    {
-        uint64_t BytesRead = 0;
-        StreamReadStatus Status = StreamReadStatus::EndOfStream;
-    };
-
-    // ── 只读字节流接口 ──────────────────────────────────────────────────────
-    class Stream
-    {
-    public:
-        virtual ~Stream() = default;
-
-        virtual StreamReadResult Read(void *destination, uint64_t capacity) = 0;
-        virtual bool Seek(uint64_t position) = 0;
-        virtual uint64_t Tell() const = 0;
-        virtual std::optional<uint64_t> Size() const = 0;
-        virtual bool IsOpen() const = 0;
-        virtual void Close() = 0;
-    };
-
-    // ── 文件流 ──────────────────────────────────────────────────────────────
-    // ifstream 藏在 src/Files.cpp 的 Impl 里，所以本头不需要 <fstream> 的成员声明。
-    class FileStream final : public Stream
-    {
-    public:
-        FileStream();
-        explicit FileStream(std::string_view path);
-        ~FileStream() override;
-
-        bool Open(std::string_view path);
-        StreamReadResult Read(void *destination, uint64_t capacity) override;
-        bool Seek(uint64_t position) override;
-        uint64_t Tell() const override;
-        std::optional<uint64_t> Size() const override;
-        bool IsOpen() const override;
-        void Close() override;
-
-    private:
-        struct Impl;
-        std::unique_ptr<Impl> m_Impl;
-    };
-
-    // ── 内存流：把一段已有字节当成流来读 ────────────────────────────────────
-    class BufferStream final : public Stream
-    {
-    public:
-        BufferStream() = default;
-        explicit BufferStream(BufferView source) { Open(source); }
-
-        void Open(BufferView source);
-        StreamReadResult Read(void *destination, uint64_t capacity) override;
-        bool Seek(uint64_t position) override;
-        uint64_t Tell() const override { return m_Position; }
-        std::optional<uint64_t> Size() const override { return m_Source.Size; }
-        bool IsOpen() const override { return m_IsOpen; }
-        void Close() override;
-
-    private:
-        BufferView m_Source;
-        uint64_t m_Position = 0;
-        bool m_IsOpen = false;
-    };
+    // ── 兼容别名 ────────────────────────────────────────────────────────────
+    // 流已经搬去 IO 模块（<IO/Stream.h>）。老代码里的 Stream / BufferStream 名字
+    // 还认，新代码请直接用 ReadStream / MemoryStream。
+    using Stream = ReadStream;
+    using BufferStream = MemoryStream;
 
 } // namespace X_Y
