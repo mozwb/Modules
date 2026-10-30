@@ -601,11 +601,13 @@ namespace X_Y
         // ── 单例 ──
         // 门面成员都刻意做成"不需要运行期堆分配"的形态，因此
         // 首次取用时不会触发 allocate，不存在自举递归。
-        static Memory &Instance()
-        {
-            static Memory s_Inst;
-            return s_Inst;
-        }
+        //
+        // ⚠️ 定义必须放在 XMemFacade.cpp，不能在头里 inline：
+        //    这个头会被多个 DLL 包含，inline 的局部 static 会让每个 DLL
+        //    各生成一份 s_Inst，进程里就有多份 Memory（实测：pkg.dll 与
+        //    X_Y.exe 的 &Instance() 不同、统计各记各的）。
+        //    放 .cpp 后，DLL 只链 X_Y.exe 的 import lib，所有模块共用 exe 里那份。
+        static Memory &Instance();
 
         // ═════════════════════════════════════════════════════════════════════
         //  配置
