@@ -1,0 +1,7 @@
+# 换行规则跟着仓库走，不依赖每台机器的 core.autocrlf。
+#
+# text=auto：Git 自己判断文本/二进制；文本一律按 LF 入库，
+#   检出时再按本机设置（Windows 上 autocrlf=true 就是 CRLF）。
+# *.bat：批处理必须是 CRLF，Windows 上检出固定成 CRLF，别让别的机器搞成 LF。
+* text=auto
+*.bat text eol=crlf

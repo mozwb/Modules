@@ -282,8 +282,23 @@ namespace X_Y
         }
     };
 
-    // ── MemoryCounter：统计器 ───────────────────────────────────────────────
-    // 线程安全（原子计数）。★ 自身零堆分配（固定数组 + 原子），
+    // ── ProcessMemoryInfo：进程级内存（系统口径）────────────────────────────
+    // 门面统计只管「经过门面的分配」。真实进程里还有：别的模块直接 malloc、
+    // 各自 STL 的分配、CRT / 系统库 / 第三方 dll 内部的堆 —— 门面一概看不见。
+    // 所以另开一条路：直接问操作系统。拿它跟 stats() 对照，
+    // 进程 RSS 远大于 UsedBytes 就说明大头在门面外（或者门面释放了但没还给系统）。
+    struct ProcessMemoryInfo
+    {
+        uint32_t ProcessId = 0;
+        uint64_t WorkingSetBytes = 0;     // 常驻物理内存（RSS）
+        uint64_t PeakWorkingSetBytes = 0; // 历史峰值 RSS
+        uint64_t PrivateBytes = 0;        // 私有提交（不含共享映射）
+        bool Valid = false;               // 系统没查到时为 false，其余字段保持 0
+
+        std::string ToString() const;
+    };
+
+    // ── MemoryCounter：统计器 ───────────────────────────────────────────────    // 线程安全（原子计数）。★ 自身零堆分配（固定数组 + 原子），
     // 因此可以在自举期（门面首次 allocate）安全使用，不会递归。
     //
     // 声明与实现分离：所有方法在 XMemStats.cpp。
@@ -803,6 +818,21 @@ namespace X_Y
         }
 
         std::string ToString() const { return m_Counter.ToString(); }
+
+        // ── 进程内存（系统口径）───────────────────────────────────────────────
+        // 上面的 stats() 只算「经过门面」的部分；这里问系统要整个进程的数。
+        // 用途：对账。门面数字远小于进程数字 = 大头在门面外。
+        //
+        // pid 只向系统要一次（进程不会换），之后复用；不分配、不依赖单例初始化顺序。
+
+        static uint32_t processId();
+
+        // 本进程
+        static ProcessMemoryInfo processMemory();
+
+        // 别的进程：只给 pid。查不到（不存在 / 没权限 / 已退出）就 Valid == false，
+        // 不抛异常、不报错码 —— 这是个观测接口，失败就是「看不见」。
+        static ProcessMemoryInfo processMemory(uint32_t pid);
 
         // ═════════════════════════════════════════════════════════════════════
         //  后端管理

@@ -7,3 +7,9 @@
 #
 # 将来 engine 起来后，模块应当通过 host 服务的 Alloc/Free 使用它，而不是自己链 Memory。
 xy_module(Memory STATIC)
+
+# src/XMemProcess.cpp 查进程内存：Windows 走 GetProcessMemoryInfo（psapi）。
+# 只在 Windows 上需要；Linux 那边读 /proc，不欠系统库。
+if(WIN32)
+    target_link_libraries(Memory PUBLIC psapi)
+endif()

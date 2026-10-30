@@ -238,3 +238,44 @@ buffer虽然是原子操作单位，但是不支持外部挂载，是由DataStor
   Memory模块还实现了Buffer，和一个循环队列数据结构，buffer的内存分配完全经过Memory，循环对列是Stl的array改造的，内存分配和Memory无关
 
   另外Memory对每一个slab上了锁，比如多个线程要同时请求一个内存块可能会出错，所以对每一个slab上了锁，如果两个线程要分配同一个大小的内存，就会出现竞争，如果大小不同的话就不会，因为每个slab只管理的是不同的内存块。
+
+## ProcessMemoryInfo —— 问系统要进程总内存（2026-10-30）
+
+门面的统计只看得见「经过门面」的分配：别人直接 `malloc`、第三方库、CRT、别的 dll 里的堆，一概看不见。所以另开一条独立通道，直接问操作系统：
+
+```cpp
+struct ProcessMemoryInfo
+{
+    uint32_t ProcessId = 0;
+    uint64_t WorkingSetBytes = 0;      // 常驻物理内存（RSS）
+    uint64_t PeakWorkingSetBytes = 0;  // 历史峰值 RSS
+    uint64_t PrivateBytes = 0;         // 私有提交
+    bool Valid = false;
+    std::string ToString() const;
+};
+
+Memory::processId();      // 本进程 pid，只向系统要一次，之后复用
+Memory::processMemory();  // 当前进程快照
+Memory::processMemory(pid); // 指定进程，只给 pid；查不到就 Valid == false
+```
+
+- 别的进程在 Windows 上要 `OpenProcess`（`QUERY_LIMITED_INFORMATION | VM_READ`），
+  系统进程、别的用户的进程、已经退出的，一律打不开 → `Valid == false`，不抛异常、不返错误码。
+  这是个观测接口，失败就是「看不见」。
+- 查自己不走 `OpenProcess`，用伪句柄 `GetCurrentProcess()`，不需要 `CloseHandle`。
+- Linux 那边读 `/proc/<pid>/status` 和 `/proc/<pid>/smaps_rollup`，权限不够同样是 `Valid == false`。
+
+- Windows 走 `GetProcessMemoryInfo`（psapi），Linux 读 `/proc/self/status` + `/proc/self/smaps_rollup`。
+- 门面自己的统计（按后端、按 slab、峰值、泄漏自检）一点没动，两套数并存：拿 `stats()` 和 `processMemory()` 一对照，就知道大头在门面里还是门面外。
+- 实现单独放 `src/XMemProcess.cpp`，平台头（`<Windows.h>` / `<psapi.h>`）关在这个 .cpp 里，公开头还是干净的。
+
+实测（分配 64 MB 并碰过每一页）：
+
+```
+before     rss 4.36 MB | peak 4.36 MB | private 0.85 MB
+alloc      rss 4.38 MB | peak 4.38 MB | private 64.98 MB   ← 只提交，没碰内存
+touched    rss 68.38 MB | peak 68.38 MB | private 64.98 MB ← 碰过每一页，物理页才给
+freed      rss 4.38 MB | peak 68.38 MB | private 0.85 MB
+```
+
+只 `allocate` 不碰内存时 RSS 不动、只有私有提交涨 —— 这正是「门面数」和「系统数」必须分开看的原因。
