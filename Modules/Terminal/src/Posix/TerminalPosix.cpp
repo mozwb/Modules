@@ -41,7 +41,9 @@ Caps ProbePlatform(Stream stream)
     if (term[0] != '\0')
         caps.TermName = term;
 
-    if (!caps.Tty || term[0] == '\0' || std::strcmp(term, "dumb") == 0)
+    if (!caps.Tty)
+        return caps;
+    if (term[0] != '\0' && std::strcmp(term, "dumb") == 0)
         return caps;
 
     caps.Ansi = true;

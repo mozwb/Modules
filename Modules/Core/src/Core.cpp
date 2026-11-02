@@ -130,4 +130,157 @@ namespace X_Y::Utils
         const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
         return result.ec == std::errc{} && result.ptr == text.data() + text.size();
     }
+
 } // namespace X_Y::Utils
+
+namespace X_Y
+{
+    GetoptParser::GetoptParser(int argc, char *const argv[],
+                               std::string_view optionSpec)
+        : argc_(argc), argv_(argv), index_(argc > 0 ? 1 : 0),
+          optionSpec_(optionSpec)
+    {
+        if (argc < 0 || (argc > 0 && argv == nullptr))
+        {
+            Fail("argc 或 argv 无效");
+            return;
+        }
+
+        for (std::size_t i = 0; i < optionSpec_.size(); ++i)
+        {
+            const char option = optionSpec_[i];
+            if (option == ':' ||
+                optionSpec_.find(option, i + 1) != std::string::npos)
+            {
+                Fail("选项规格包含无效或重复的选项");
+                return;
+            }
+            if (i + 1 < optionSpec_.size() && optionSpec_[i + 1] == ':')
+            {
+                if (i + 2 < optionSpec_.size() && optionSpec_[i + 2] == ':')
+                {
+                    Fail("不支持可选值选项");
+                    return;
+                }
+                ++i;
+            }
+        }
+    }
+
+    GetoptParser::Result GetoptParser::Fail(std::string message)
+    {
+        error_ = std::move(message);
+        finished_ = true;
+        return Result::Error;
+    }
+
+    GetoptParser::Result GetoptParser::Next()
+    {
+        option_ = '\0';
+        optionValue_ = nullptr;
+        argument_ = nullptr;
+
+        if (!error_.empty())
+        {
+            return Result::Error;
+        }
+        if (finished_)
+        {
+            return Result::End;
+        }
+
+        for (;;)
+        {
+            if (pendingOptions_ != nullptr && *pendingOptions_ != '\0')
+            {
+                option_ = *pendingOptions_++;
+                const std::size_t optionPosition = optionSpec_.find(option_);
+                if (optionPosition == std::string::npos)
+                {
+                    return Fail(std::string("未知选项: -") + option_);
+                }
+
+                const bool requiresValue =
+                    optionPosition + 1 < optionSpec_.size() &&
+                    optionSpec_[optionPosition + 1] == ':';
+                if (requiresValue)
+                {
+                    if (*pendingOptions_ != '\0')
+                    {
+                        optionValue_ = pendingOptions_;
+                        pendingOptions_ = nullptr;
+                    }
+                    else
+                    {
+                        pendingOptions_ = nullptr;
+                        if (index_ >= argc_)
+                        {
+                            return Fail(std::string("选项缺少值: -") + option_);
+                        }
+                        if (argv_[index_] == nullptr)
+                        {
+                            return Fail("argv 中包含空指针");
+                        }
+                        optionValue_ = argv_[index_++];
+                    }
+                }
+                else if (*pendingOptions_ == '\0')
+                {
+                    pendingOptions_ = nullptr;
+                }
+                return Result::Option;
+            }
+
+            pendingOptions_ = nullptr;
+            if (index_ >= argc_)
+            {
+                finished_ = true;
+                return Result::End;
+            }
+            if (argv_[index_] == nullptr)
+            {
+                return Fail("argv 中包含空指针");
+            }
+
+            const char *arg = argv_[index_++];
+            if (optionsEnabled_ && std::string_view(arg) == "--")
+            {
+                optionsEnabled_ = false;
+                continue;
+            }
+            if (optionsEnabled_ && arg[0] == '-' && arg[1] != '\0')
+            {
+                if (arg[1] == '-')
+                {
+                    return Fail(std::string("不支持长选项: ") + arg);
+                }
+                pendingOptions_ = arg + 1;
+                continue;
+            }
+
+            argument_ = arg;
+            return Result::Argument;
+        }
+    }
+
+    char GetoptParser::Option() const
+    {
+        return option_;
+    }
+
+    const char *GetoptParser::OptionValue() const
+    {
+        return optionValue_;
+    }
+
+    const char *GetoptParser::Argument() const
+    {
+        return argument_;
+    }
+
+    const char *GetoptParser::Error() const
+    {
+        return error_.empty() ? nullptr : error_.c_str();
+    }
+
+} // namespace X_Y

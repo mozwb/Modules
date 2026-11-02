@@ -1,0 +1,10 @@
+name = Core
+version = 0.0.1
+kind = library
+sources = src
+include = ..
+headers = .
+exclude = 
+deps = 
+libs =
+defines =

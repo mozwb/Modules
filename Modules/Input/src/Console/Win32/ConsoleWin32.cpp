@@ -73,6 +73,8 @@ RawMode::RawMode()
         raw &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
         raw |= ENABLE_EXTENDED_FLAGS;
         raw &= ~ENABLE_QUICK_EDIT_MODE;
+        // 不要把滚轮事件收进程序；否则终端滚轮无法滚动历史输出。
+        raw &= ~ENABLE_MOUSE_INPUT;
 
         if (::SetConsoleMode(impl->Input, raw))
         {

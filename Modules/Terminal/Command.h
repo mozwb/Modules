@@ -108,11 +108,17 @@ namespace X_Y::Command
         void SetExternalEnabled(bool on);
         bool ExternalEnabled() const;
 
+        // 查不到内建命令时的回调；设置后优先于外部进程。
+        // 用于把未知命令交回宿主（例如 X_Y 的 kernel 服务）。
+        void SetFallback(Handler handler);
+        bool HasFallback() const;
+
         Result Run(std::string_view line);
         Result Run(const Args &args);
 
     private:
         std::map<std::string, Handler> _handlers;
+        Handler                        _fallback;
         bool                           _external = true;
     };
 }

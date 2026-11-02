@@ -1,0 +1,10 @@
+name = IO
+version = 0.0.1
+kind = library
+sources = src
+include = ..
+headers = .
+exclude = src/FilesSystem.cpp
+deps = Memory
+libs =
+defines =

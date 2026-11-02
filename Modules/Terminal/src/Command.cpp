@@ -178,6 +178,16 @@ namespace X_Y::Command
         return _external;
     }
 
+    void Registry::SetFallback(Handler handler)
+    {
+        _fallback = std::move(handler);
+    }
+
+    bool Registry::HasFallback() const
+    {
+        return static_cast<bool>(_fallback);
+    }
+
     Result Registry::Run(const Args &args)
     {
         if (args.Name.empty())
@@ -186,6 +196,9 @@ namespace X_Y::Command
         const auto it = _handlers.find(Normalize(args.Name));
         if (it == _handlers.end())
         {
+            if (_fallback)
+                return _fallback(args);
+
             if (!_external)
                 return Result{127, false, "未知命令: " + args.Name};
 

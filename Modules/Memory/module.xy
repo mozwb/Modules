@@ -1,0 +1,11 @@
+name = Memory
+version = 0.0.1
+kind = library
+sources = src
+include = ..
+headers = .
+exclude = src/XMemGlobalNew.cpp
+deps =
+libs =
+libs_windows = psapi
+defines =

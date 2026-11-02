@@ -246,4 +246,73 @@ namespace X_Y
 // ── 位操作宏 ─────────────────────────────────────────────────────────────
 #define BIT(X) (1 << X)
 
+    // ── getopt ─────────────────────────────────────────────────────────────
+    // 跨平台短选项解析器。optionSpec 中跟在选项字符后的 ':' 表示该选项需要值。
+    // 例如 "vo:" 支持 -v、-o value、-ovalue 和组合短选项 -vo value。
+    class GetoptParser
+    {
+    public:
+        enum class Result
+        {
+            Option,
+            Argument,
+            End,
+            Error
+        };
+
+        GetoptParser(int argc, char *const argv[], std::string_view optionSpec);
+
+        // 每次调用返回一个选项或位置参数；-- 后的参数都按位置参数处理。
+        // 到末尾返回 End，遇到未知/长选项或缺少选项值时返回 Error。
+        Result Next();
+
+        // Result::Option 时返回选项字符；其他结果返回 '\0'。
+        char Option() const;
+        // 当前带值选项的值；没有值时返回 nullptr。
+        const char *OptionValue() const;
+        // Result::Argument 时返回位置参数；其他结果返回 nullptr。
+        const char *Argument() const;
+        // Result::Error 时返回错误说明；没有错误时返回 nullptr。
+        const char *Error() const;
+
+    private:
+        Result Fail(std::string message);
+
+        int argc_ = 0;
+        char *const *argv_ = nullptr;
+        int index_ = 0;
+        std::string optionSpec_;
+        const char *pendingOptions_ = nullptr;
+        char option_ = '\0';
+        const char *optionValue_ = nullptr;
+        const char *argument_ = nullptr;
+        std::string error_;
+        bool optionsEnabled_ = true;
+        bool finished_ = false;
+    };
+    // 使用示例
+    //  X_Y::GetoptParser parser(argc, argv, "vo:"); // -v 开关；-o 需要值
+
+    // for (;;)
+    // {
+    //     const auto result = parser.Next();
+    //     if (result == X_Y::GetoptParser::Result::End)
+    //         break;
+    //     if (result == X_Y::GetoptParser::Result::Error)
+    //     {
+    //         std::cerr << parser.Error() << '\n';
+    //         return 1;
+    //     }
+
+    //     if (result == X_Y::GetoptParser::Result::Option)
+    //     {
+    //         if (parser.Option() == 'o')
+    //         { /* 使用 parser.OptionValue() */
+    //         }
+    //     }
+    //     else
+    //     {
+    //         /* 使用 parser.Argument() */
+    //     }
+    // }
 } // namespace X_Y
