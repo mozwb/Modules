@@ -155,69 +155,11 @@ namespace X_Y
             return !ec;
         }
         bool IsDirectory() const { return std::filesystem::is_directory(m_Path); }
-        std::vector<XPath> ListDirectory() const
-        {
-            std::vector<XPath> entries;
-            if (IsDirectory())
-            {
-                for (const auto &entry : std::filesystem::directory_iterator(m_Path))
-                {
-                    entries.emplace_back(entry.path());
-                }
-            }
-            return entries;
-        }
-        std::vector<XPath> ListMatching(const std::string &pattern) const
-        {
-            std::vector<XPath> matchingEntries;
-            if (IsDirectory())
-            {
-                for (const auto &entry : std::filesystem::directory_iterator(m_Path))
-                {
-                    XPath xpath(entry.path());
-                    if (xpath.MatchName(pattern))
-                    {
-                        matchingEntries.push_back(xpath);
-                    }
-                }
-            }
-            return matchingEntries;
-        }
-
+        // 列出当前目录下的XPath
+        std::vector<XPath> ListXPaths() const;
+        std::vector<XPath> ListMatching(const std::string &pattern) const;
         // 列出目录下的所有普通文件；recursive=true 时递归子目录
-        std::vector<XPath> ListFiles(bool recursive = true) const
-        {
-            std::vector<XPath> files;
-            if (!IsDirectory())
-                return files;
-
-            std::error_code ec;
-            if (recursive)
-            {
-                for (std::filesystem::recursive_directory_iterator it(
-                         m_Path, std::filesystem::directory_options::skip_permission_denied, ec),
-                     end;
-                     it != end; it.increment(ec))
-                {
-                    if (ec)
-                        break;
-                    if (it->is_regular_file(ec))
-                        files.emplace_back(it->path());
-                }
-            }
-            else
-            {
-                for (std::filesystem::directory_iterator it(m_Path, ec), end;
-                     it != end; it.increment(ec))
-                {
-                    if (ec)
-                        break;
-                    if (it->is_regular_file(ec))
-                        files.emplace_back(it->path());
-                }
-            }
-            return files;
-        }
+        std::vector<XPath> ListFiles(bool recursive = true) const;
         // 以自身为根渲染目录树；rootName 非空时作为首行
         std::string ToTree(const std::string &rootName = "") const
         {

@@ -228,4 +228,65 @@ namespace X_Y
         std::ofstream ofs(m_Path);
         return ofs.good();
     }
+    std::vector<XPath> XPath::ListXPaths() const
+    {
+        std::vector<XPath> entries;
+        if (IsDirectory())
+        {
+            for (const auto &entry : std::filesystem::directory_iterator(m_Path))
+            {
+                entries.emplace_back(entry.path());
+            }
+        }
+        return entries;
+    }
+    std::vector<XPath> XPath::ListFiles(bool recursive) const
+    {
+        std::vector<XPath> files;
+        if (!IsDirectory())
+            return files;
+
+        std::error_code ec;
+        if (recursive)
+        {
+            for (std::filesystem::recursive_directory_iterator it(
+                     m_Path, std::filesystem::directory_options::skip_permission_denied, ec),
+                 end;
+                 it != end; it.increment(ec))
+            {
+                if (ec)
+                    break;
+                if (it->is_regular_file(ec))
+                    files.emplace_back(it->path());
+            }
+        }
+        else
+        {
+            for (std::filesystem::directory_iterator it(m_Path, ec), end;
+                 it != end; it.increment(ec))
+            {
+                if (ec)
+                    break;
+                if (it->is_regular_file(ec))
+                    files.emplace_back(it->path());
+            }
+        }
+        return files;
+    }
+    std::vector<XPath> XPath::ListMatching(const std::string &pattern) const
+    {
+        std::vector<XPath> matchingEntries;
+        if (IsDirectory())
+        {
+            for (const auto &entry : std::filesystem::directory_iterator(m_Path))
+            {
+                XPath xpath(entry.path());
+                if (xpath.MatchName(pattern))
+                {
+                    matchingEntries.push_back(xpath);
+                }
+            }
+        }
+        return matchingEntries;
+    }
 }
