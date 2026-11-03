@@ -9,7 +9,7 @@
 // IO 的核心实现：跨平台文件/目录/整文件读写。
 // Windows 文件对话框依赖 Decoder，留在 FilesSystem.cpp；
 // xy 构建 IO 库时排除 FilesSystem.cpp，只编这个文件 + Stream.cpp。
-
+namespace fs = std::filesystem;
 namespace X_Y
 {
     Buffer FilesSystem::ReadFileBinary(const File &filepath)
@@ -43,7 +43,7 @@ namespace X_Y
             return false;
         }
 
-        stream.write(reinterpret_cast<const char*>(buffer.Data), buffer.Size);
+        stream.write(reinterpret_cast<const char *>(buffer.Data), buffer.Size);
         stream.close();
         return true;
     }
@@ -62,11 +62,71 @@ namespace X_Y
             }
         }
 
-        stream.write(reinterpret_cast<const char*>(buffer.Data), buffer.Size);
+        stream.write(reinterpret_cast<const char *>(buffer.Data), buffer.Size);
         stream.close();
         return true;
     }
 
+    File FilesSystem::FindFile(const File &directory, std::string filename, int direction, int depth)
+    {
+        if (direction == 0) // 向上查找：往父目录
+        {
+            File currentDir = directory;
+            int currentDepth = 0;
+            while (true)
+            {
+                File targetFile = currentDir / filename;
+                std::error_code ec;
+                if (fs::exists(targetFile, ec)) // 文件 OR 文件夹，存在即匹配
+                {
+                    return targetFile;
+                }
+
+                // 达到向上层数上限，停止
+                if (depth >= 0 && currentDepth >= depth)
+                {
+                    break;
+                }
+
+                File parentDir = currentDir.parent_path();
+                if (parentDir == currentDir) // 到达根目录
+                {
+                    break;
+                }
+                currentDir = parentDir;
+                ++currentDepth;
+            }
+        }
+        else if (direction == 1) // 向下查找：递归子目录
+        {
+            std::error_code ec;
+            fs::recursive_directory_iterator it(directory, fs::directory_options::skip_permission_denied, ec);
+
+            // 根目录本身就打不开/不存在
+            if (ec)
+            {
+                return {};
+            }
+
+            for (; it != fs::recursive_directory_iterator(); ++it)
+            {
+                const auto &entry = *it;
+
+                if (depth >= 0 && it.depth() >= depth)
+                {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+
+                if (entry.path().filename() == filename)
+                {
+                    return entry.path();
+                }
+            }
+        }
+
+        return {}; // 未找到
+    }
     std::string BuildTreeText(const std::vector<std::string> &relativePaths,
                               const std::string &rootName)
     {
@@ -82,7 +142,7 @@ namespace X_Y
             std::string path = raw;
             std::replace(path.begin(), path.end(), '\\', '/');
 
-            Node* node = &root;
+            Node *node = &root;
             std::size_t begin = 0;
             while (begin < path.size())
             {
@@ -109,18 +169,18 @@ namespace X_Y
             out += rootName + '\n';
         }
 
-        std::function<void(const Node&, const std::string&)> render =
-            [&](const Node& node, const std::string& prefix)
+        std::function<void(const Node &, const std::string &)> render =
+            [&](const Node &node, const std::string &prefix)
         {
-            std::vector<const std::pair<const std::string, Node>*> children;
+            std::vector<const std::pair<const std::string, Node> *> children;
             children.reserve(node.Children.size());
-            for (const auto& child : node.Children)
+            for (const auto &child : node.Children)
             {
                 children.push_back(&child);
             }
 
             std::sort(children.begin(), children.end(),
-                      [](const auto* lhs, const auto* rhs)
+                      [](const auto *lhs, const auto *rhs)
                       {
                           const bool lhsDir = lhs->second.IsDirectory();
                           const bool rhsDir = rhs->second.IsDirectory();
@@ -133,7 +193,7 @@ namespace X_Y
 
             for (std::size_t i = 0; i < children.size(); ++i)
             {
-                const auto* child = children[i];
+                const auto *child = children[i];
                 const bool last = (i + 1 == children.size());
 
                 out += prefix;

@@ -86,7 +86,8 @@ namespace X_Y
         static Buffer ReadFileBinary(const File &filepath);
         static bool WriteFileBinary(const File &filepath, const Buffer &buffer);
         static bool AppendFileBinary(const File &filepath, const Buffer &buffer);
-
+        // 从设置的目录开始，按 direction 方向（0=向上，1=向下）查找文件，depth 为查找深度限制（-1=无限制）
+        static File FindFile(const File &directory, std::string filename, int direction, int depth);
 #ifdef XY_PLATFORM_WINDOWS
         static std::optional<std::wstring> OpenFileDialog(const char *filter = "All Files (*.*)\0*.*\0");
         static std::optional<std::wstring> SaveFileDialog(const char *filter = "All Files (*.*)\0*.*\0");
