@@ -75,6 +75,7 @@ xy_vendor_probe()
 set(XY_MODULE_ORDER
     Core
     Memory
+    Thread
     Timer
     Math
     IO

@@ -65,15 +65,26 @@ version 0.0.0
 ────────────────────────────────────────────────────────────────
 */
 
+#include <algorithm>
 #include <cstdio>
+#include <deque>
+#include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <ostream>
 #include <regex>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <Core/Core.h>
+#include <Thread/ConditionVariable.h>
+#include <Thread/Mutex.h>
+#include <Thread/Thread.h>
 #include <Timer/Timer.h>
 
 // namespace X_Y
@@ -399,54 +410,250 @@ public:                                                   \
 
 		struct LogDevices : public CustomLogBase
 		{
-			std::vector<std::unique_ptr<DEVICE>> devices;
+			LogDevices() = default;
+			~LogDevices()
+			{
+				StopConsumer(true);
+			}
 
-			// 1. 接收裸指针（别人new的）
+			LogDevices(const LogDevices &) = delete;
+			LogDevices &operator=(const LogDevices &) = delete;
+
 			void add(DEVICE *dev)
 			{
 				if (dev)
-					devices.emplace_back(dev);
+				{
+					LockGuard lock(m_Mutex);
+					m_Devices.emplace_back(dev);
+				}
 			}
 
-			// 2. 接收 unique_ptr（安全转移所有权）
 			void add(std::unique_ptr<DEVICE> dev)
 			{
 				if (dev)
-					devices.push_back(std::move(dev));
-			}
-			void clear()
-			{
-				devices.clear();
-			}
-			void remove(DEVICE *dev)
-			{
-				devices.erase(std::remove_if(devices.begin(), devices.end(),
-											 [dev](const std::unique_ptr<DEVICE> &d)
-											 { return d.get() == dev; }),
-							  devices.end());
-			}
-			void logAll(const std::string &msg)
-			{
-				for (auto &dev : devices)
 				{
-					dev->Log(msg);
+					LockGuard lock(m_Mutex);
+					m_Devices.emplace_back(std::move(dev));
 				}
 			}
+
+			void clear()
+			{
+				LockGuard lock(m_Mutex);
+				m_Devices.clear();
+			}
+
+			void remove(DEVICE *dev)
+			{
+				LockGuard lock(m_Mutex);
+				m_Devices.erase(std::remove_if(m_Devices.begin(), m_Devices.end(),
+											   [dev](const std::shared_ptr<DEVICE> &d)
+											   { return d.get() == dev; }),
+								m_Devices.end());
+			}
+
+			void logAll(const std::string &msg)
+			{
+				for (;;)
+				{
+					std::vector<std::shared_ptr<DEVICE>> devices;
+					{
+						UniqueLock lock(m_Mutex);
+						m_ModeCondition.Wait(lock, [this]
+											 { return !m_Stopping; });
+						if (m_Async)
+						{
+							m_Queue.push_back(LogRecord{msg, m_Devices});
+							++m_Submitted;
+							m_QueueCondition.NotifyOne();
+							return; // 如果是异步这里直接返回
+						}
+						devices = m_Devices; // 如果是同步，拷贝一份设备列表，避免在写入时被修改
+					}
+
+					std::lock_guard<std::recursive_mutex> dispatchLock(m_DispatchMutex);
+					{
+						LockGuard lock(m_Mutex);
+						if (m_Stopping)
+							continue;
+						if (m_Async)
+						{
+							m_Queue.push_back(LogRecord{msg, std::move(devices)});
+							++m_Submitted;
+							m_QueueCondition.NotifyOne();
+							return; // 如果一开始是同步，但是第二次锁是变为异步就会进入这里
+						}
+					}
+
+					WriteToDevices(devices, msg);
+					return;
+				}
+			}
+
+			void EnableAsync()
+			{
+				std::lock_guard<std::mutex> modeLock(m_ModeMutex);
+				std::lock_guard<std::recursive_mutex> dispatchLock(m_DispatchMutex);
+				UniqueLock lock(m_Mutex);
+				if (m_Async)
+					return;
+
+				m_Stopping = false;
+				m_Submitted = 0;
+				m_Completed = 0;
+				try
+				{
+					m_Async = true;
+					m_Consumer.Start([this](std::stop_token)
+									 { Consume(); });
+				}
+				catch (...)
+				{
+					m_Async = false;
+					throw;
+				}
+			}
+
+			void DisableAsync()
+			{
+				StopConsumer(false);
+				ThrowAsyncError();
+			}
+
+			void Flush()
+			{
+				UniqueLock lock(m_Mutex);
+				m_ModeCondition.Wait(lock, [this]
+									 { return !m_Stopping; });
+				if (m_Async && m_Consumer.GetId() == std::this_thread::get_id())
+					throw std::logic_error("LogDevices::Flush cannot run on its consumer thread");
+				const std::size_t target = m_Submitted;
+				if (m_Async)
+					m_QueueCondition.Wait(lock, [this, target]
+										  { return m_Completed >= target; });
+				lock.unlock();
+				ThrowAsyncError();
+			}
+
+			bool IsAsync() const
+			{
+				LockGuard lock(m_Mutex);
+				return m_Async;
+			}
+
 			std::string toString() const
 			{
+				LockGuard lock(m_Mutex);
 				std::string result;
-				for (const auto &dev : devices)
+				for (const auto &dev : m_Devices)
 				{
 					result += dev->toString() + " ";
 				}
 				return result.empty() ? "No Devices" : result;
 			}
 
-			// 禁止外部拷贝管理器，防止乱生命周期
-			LogDevices() = default;
-			~LogDevices() = default;
-			LogDevices(const LogDevices &) = delete;
-			LogDevices &operator=(const LogDevices &) = delete;
+		private:
+			struct LogRecord
+			{
+				std::string message;
+				std::vector<std::shared_ptr<DEVICE>> devices;
+			};
+
+			void Consume()
+			{
+				for (;;)
+				{
+					LogRecord record;
+					{
+						UniqueLock lock(m_Mutex);
+						m_QueueCondition.Wait(lock, [this]
+											  { return m_Stopping || !m_Queue.empty(); });
+						if (m_Queue.empty())
+							return;
+						record = std::move(m_Queue.front());
+						m_Queue.pop_front();
+					}
+
+					try
+					{
+						std::lock_guard<std::recursive_mutex> dispatchLock(m_DispatchMutex);
+						WriteToDevices(record.devices, record.message);
+					}
+					catch (...)
+					{
+						LockGuard lock(m_Mutex);
+						if (!m_AsyncError)
+							m_AsyncError = std::current_exception();
+					}
+
+					{
+						LockGuard lock(m_Mutex);
+						++m_Completed;
+					}
+					m_QueueCondition.NotifyAll();
+				}
+			}
+
+			void WriteToDevices(
+				const std::vector<std::shared_ptr<DEVICE>> &devices,
+				const std::string &message)
+			{
+				for (const auto &dev : devices)
+				{
+					dev->Log(message);
+				}
+			}
+
+			void StopConsumer(bool terminateOnConsumerThread)
+			{
+				std::lock_guard<std::mutex> modeLock(m_ModeMutex);
+				{
+					std::lock_guard<std::recursive_mutex> dispatchLock(m_DispatchMutex);
+					UniqueLock lock(m_Mutex);
+					if (!m_Async)
+						return;
+					if (m_Consumer.GetId() == std::this_thread::get_id())
+					{
+						if (terminateOnConsumerThread)
+							std::terminate();
+						throw std::logic_error("LogDevices::DisableAsync cannot run on its consumer thread");
+					}
+					m_Stopping = true;
+				}
+				m_QueueCondition.NotifyAll();
+				m_Consumer.Join();
+				{
+					LockGuard lock(m_Mutex);
+					m_Async = false;
+					m_Stopping = false;
+				}
+				m_ModeCondition.NotifyAll();
+			}
+
+			void ThrowAsyncError()
+			{
+				std::exception_ptr error;
+				{
+					LockGuard lock(m_Mutex);
+					error = std::exchange(m_AsyncError, nullptr);
+				}
+				if (error)
+					std::rethrow_exception(error);
+			}
+
+			mutable Mutex m_Mutex;
+			std::recursive_mutex m_DispatchMutex;
+			std::mutex m_ModeMutex;
+			ConditionVariable m_QueueCondition;
+			ConditionVariable m_ModeCondition;
+			std::vector<std::shared_ptr<DEVICE>> m_Devices;
+			std::deque<LogRecord> m_Queue;
+			Thread m_Consumer;
+			bool m_Async = false;
+			bool m_Stopping = false;
+			std::size_t m_Submitted = 0;
+			std::size_t m_Completed = 0;
+			std::exception_ptr m_AsyncError;
 		};
 
 		// 单个等级的简易接口
