@@ -641,12 +641,6 @@ namespace X_Y
                         "Try socket operations require non-blocking mode");
             }
 
-            void EnsureValid() const
-            {
-                if (!IsValid())
-                    throw std::logic_error("Socket handle is closed");
-            }
-
             std::optional<SocketAddr> GetSocketAddress(bool peer) const
             {
                 sockaddr_storage nativeAddr{};

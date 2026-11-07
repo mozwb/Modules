@@ -932,6 +932,8 @@ namespace
         }
     }
 
+#endif
+
     void TestReceiveTimeout()
     {
         X_Y::DatagramServer server;
@@ -977,7 +979,6 @@ namespace
         Require(received.size == 1 && buffer[0] == message,
                 "zero timeout did not restore an unbounded receive");
     }
-#endif
 }
 
 int main()
@@ -988,16 +989,16 @@ int main()
         TestTcpLoopback();
         TestUdpLoopback();
         TestTimeoutValidation();
-#ifdef _WIN32
         TestReactorUdpReadWriteAndStop();
         TestReactorStopFromAnotherThread();
         TestNonBlockingSocketOperations();
         TestEndpointReactorAndTryOperations();
         TestTcpEndpointReactorEcho();
         TestEndpointCloseRemovesReactorWatch();
+#ifdef _WIN32
         TestTcpReceiveTimeout();
-        TestReceiveTimeout();
 #endif
+        TestReceiveTimeout();
         std::cout << "Network smoke tests passed\n";
         return 0;
     }
