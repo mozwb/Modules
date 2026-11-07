@@ -16,4 +16,14 @@ namespace X_Y
     {
     }
 
+    NetworkTimeoutError::NetworkTimeoutError(
+        std::string operation,
+        int errorCode,
+        std::string detail)
+        : NetworkError(
+              std::move(operation),
+              errorCode,
+              "operation timed out: " + detail)
+    {
+    }
 }

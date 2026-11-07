@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,6 +26,12 @@ namespace X_Y
     {
         Stream,
         Datagram
+    };
+
+    enum class SocketTimeoutDirection : uint8_t
+    {
+        Send,
+        Receive
     };
 
     // 我们自己定义的Socket选项ID，上层只使用这个枚举
@@ -74,6 +81,21 @@ namespace X_Y
         bool truncated = false;
     };
 
+    enum class SocketIoStatus : std::uint8_t
+    {
+        Completed,
+        WouldBlock,
+        Closed
+    };
+
+    // value is present for Completed; Closed is used by stream reads.
+    template <typename T>
+    struct SocketIoResult
+    {
+        SocketIoStatus status = SocketIoStatus::WouldBlock;
+        std::optional<T> value;
+    };
+
     class SocketHandleImpl
     {
     public:
@@ -84,11 +106,35 @@ namespace X_Y
         virtual void Connect(const SocketAddr &addr) = 0;
         virtual bool Listen(int backlog) = 0;
         virtual std::unique_ptr<SocketHandleImpl> Accept() = 0;
+        // Try operations require non-blocking mode.
+        virtual SocketIoResult<std::unique_ptr<SocketHandleImpl>> TryAccept() = 0;
         virtual std::size_t SendSome(const void *data, std::size_t size) = 0;
+        virtual SocketIoResult<std::size_t> TrySendSome(
+            const void *data,
+            std::size_t size) = 0;
         virtual std::size_t ReceiveSome(void *data, std::size_t size) = 0;
+        virtual SocketIoResult<std::size_t> TryReceiveSome(
+            void *data,
+            std::size_t size) = 0;
         virtual std::size_t SendTo(const SocketAddr &peer, const void *data, std::size_t size) = 0;
+        virtual SocketIoResult<std::size_t> TrySendTo(
+            const SocketAddr &peer,
+            const void *data,
+            std::size_t size) = 0;
         virtual DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity) = 0;
+        virtual SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+            void *data,
+            std::size_t capacity) = 0;
         virtual bool SetNonBlocking(bool enable) = 0;
+        // Platforms may opt out until timeout behavior is implemented and tested there.
+        virtual bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout)
+        {
+            (void)direction;
+            (void)timeout;
+            return false;
+        }
         // Option values are passed as int; optlen must equal sizeof(int).
         virtual bool SetOption(SocketOptionId option, const void *val, SocketLen optlen) = 0;
         virtual std::optional<SocketAddr> GetLocalAddr() const = 0;

@@ -76,6 +76,7 @@ set(XY_MODULE_ORDER
     Core
     Memory
     Thread
+    Network
     Timer
     Math
     IO

@@ -2,10 +2,12 @@
 
 #include "Network/NetworkError.h"
 #include "Network/SocketHandle.h"
+#include "Network/IoContext.h"
 #include "Memory/Memory.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,8 +21,30 @@ namespace X_Y
         virtual ~StreamTransport() = default;
 
         virtual void Connect(const std::string &host, std::uint16_t port) = 0;
+        virtual bool SetTimeout(
+            SocketTimeoutDirection,
+            std::chrono::milliseconds)
+        {
+            // Injected transports may opt out; callers receive false.
+            return false;
+        }
         virtual std::size_t SendSome(const void *data, std::size_t size) = 0;
         virtual std::size_t ReceiveSome(void *data, std::size_t capacity) = 0;
+        virtual SocketIoResult<std::size_t> TrySendSome(const void *, std::size_t)
+        {
+            throw std::logic_error("Stream transport does not support non-blocking send");
+        }
+        virtual SocketIoResult<std::size_t> TryReceiveSome(void *, std::size_t)
+        {
+            throw std::logic_error("Stream transport does not support non-blocking receive");
+        }
+        virtual IoContext::Registration Watch(
+            IoContext &,
+            IoInterest,
+            IoContext::Handler)
+        {
+            throw std::logic_error("Stream transport does not support Reactor registration");
+        }
         virtual void Close() noexcept = 0;
         virtual bool IsConnected() const noexcept = 0;
         virtual std::optional<SocketAddr> GetLocalAddr() const = 0;
@@ -33,7 +57,25 @@ namespace X_Y
         virtual ~StreamServerTransport() = default;
 
         virtual bool Listen(const SocketAddr &address, int backlog) = 0;
+        virtual bool SetTimeout(
+            SocketTimeoutDirection,
+            std::chrono::milliseconds)
+        {
+            return false;
+        }
         virtual std::unique_ptr<StreamTransport> Accept() = 0;
+        virtual SocketIoResult<std::unique_ptr<StreamTransport>> TryAccept()
+        {
+            throw std::logic_error("Stream server transport does not support non-blocking accept");
+        }
+        virtual IoContext::Registration Watch(
+            IoContext &,
+            IoInterest,
+            IoContext::Handler)
+        {
+            throw std::logic_error(
+                "Stream server transport does not support Reactor registration");
+        }
         virtual void Close() noexcept = 0;
         virtual bool IsListening() const noexcept = 0;
         virtual std::optional<SocketAddr> GetLocalAddr() const = 0;
@@ -45,11 +87,35 @@ namespace X_Y
         virtual ~DatagramTransport() = default;
 
         virtual bool Bind(const SocketAddr &address) = 0;
+        virtual bool SetTimeout(
+            SocketTimeoutDirection,
+            std::chrono::milliseconds)
+        {
+            return false;
+        }
         virtual std::size_t SendTo(
             const SocketAddr &peer,
             const void *data,
             std::size_t size) = 0;
         virtual DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity) = 0;
+        virtual SocketIoResult<std::size_t> TrySendTo(
+            const SocketAddr &,
+            const void *,
+            std::size_t)
+        {
+            throw std::logic_error("Datagram transport does not support non-blocking send");
+        }
+        virtual SocketIoResult<DatagramReceiveResult> TryReceiveFrom(void *, std::size_t)
+        {
+            throw std::logic_error("Datagram transport does not support non-blocking receive");
+        }
+        virtual IoContext::Registration Watch(
+            IoContext &,
+            IoInterest,
+            IoContext::Handler)
+        {
+            throw std::logic_error("Datagram transport does not support Reactor registration");
+        }
         virtual void Close() noexcept = 0;
         virtual bool IsValid() const noexcept = 0;
         virtual bool IsBound() const noexcept = 0;
@@ -67,16 +133,33 @@ namespace X_Y
     public:
         // Stream operations preserve byte-stream semantics; calls do not define messages.
         StreamConnection(StreamConnection &&) noexcept = default;
-        StreamConnection &operator=(StreamConnection &&) noexcept = default;
+        StreamConnection &operator=(StreamConnection &&other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Registration.Reset();
+                m_Transport = std::move(other.m_Transport);
+                m_Registration = std::move(other.m_Registration);
+                m_ReactorMode = other.m_ReactorMode;
+            }
+            return *this;
+        }
 
         std::size_t SendSome(const void *data, std::size_t size);
         std::size_t ReceiveSome(void *data, std::size_t capacity);
+        SocketIoResult<std::size_t> TrySendSome(const void *data, std::size_t size);
+        SocketIoResult<std::size_t> TryReceiveSome(void *data, std::size_t capacity);
+        void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout);
         void SendAll(const void *data, std::size_t size);
         void SendAll(const Buffer &buffer);
         std::uint64_t ReceiveSome(Buffer &buffer);
 
         void Close() noexcept
         {
+            m_Registration.Reset();
             if (m_Transport)
                 m_Transport->Close();
         }
@@ -101,6 +184,8 @@ namespace X_Y
             : m_Transport(std::move(transport)) {}
 
         std::unique_ptr<StreamTransport> m_Transport;
+        IoContext::Registration m_Registration;
+        bool m_ReactorMode = false;
     };
 
     class StreamClient
@@ -112,11 +197,27 @@ namespace X_Y
         StreamClient(const StreamClient &) = delete;
         StreamClient &operator=(const StreamClient &) = delete;
         StreamClient(StreamClient &&) noexcept = default;
-        StreamClient &operator=(StreamClient &&) noexcept = default;
+        StreamClient &operator=(StreamClient &&other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Registration.Reset();
+                m_Transport = std::move(other.m_Transport);
+                m_Registration = std::move(other.m_Registration);
+                m_ReactorMode = other.m_ReactorMode;
+            }
+            return *this;
+        }
 
         void Connect(const std::string &host, std::uint16_t port);
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout);
         std::size_t SendSome(const void *data, std::size_t size);
         std::size_t ReceiveSome(void *data, std::size_t capacity);
+        SocketIoResult<std::size_t> TrySendSome(const void *data, std::size_t size);
+        SocketIoResult<std::size_t> TryReceiveSome(void *data, std::size_t capacity);
+        void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
         void SendAll(const void *data, std::size_t size);
         void SendAll(const Buffer &buffer);
         std::uint64_t ReceiveSome(Buffer &buffer);
@@ -128,6 +229,8 @@ namespace X_Y
 
     private:
         std::unique_ptr<StreamTransport> m_Transport;
+        IoContext::Registration m_Registration;
+        bool m_ReactorMode = false;
     };
 
     class StreamServer
@@ -139,16 +242,34 @@ namespace X_Y
         StreamServer(const StreamServer &) = delete;
         StreamServer &operator=(const StreamServer &) = delete;
         StreamServer(StreamServer &&) noexcept = default;
-        StreamServer &operator=(StreamServer &&) noexcept = default;
+        StreamServer &operator=(StreamServer &&other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Registration.Reset();
+                m_Transport = std::move(other.m_Transport);
+                m_Registration = std::move(other.m_Registration);
+                m_ReactorMode = other.m_ReactorMode;
+            }
+            return *this;
+        }
 
         bool Listen(const SocketAddr &address, int backlog = 128);
+        // Applies to accepted connections, not to the blocking Accept operation.
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout);
         std::optional<StreamConnection> Accept();
+        SocketIoResult<StreamConnection> TryAccept();
+        void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
         void Close() noexcept;
         bool IsListening() const noexcept;
         std::optional<SocketAddr> GetLocalAddr() const;
 
     private:
         std::unique_ptr<StreamServerTransport> m_Transport;
+        IoContext::Registration m_Registration;
+        bool m_ReactorMode = false;
     };
 
     class DatagramClient
@@ -161,19 +282,42 @@ namespace X_Y
         DatagramClient(const DatagramClient &) = delete;
         DatagramClient &operator=(const DatagramClient &) = delete;
         DatagramClient(DatagramClient &&) noexcept = default;
-        DatagramClient &operator=(DatagramClient &&) noexcept = default;
+        DatagramClient &operator=(DatagramClient &&other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Registration.Reset();
+                m_Transport = std::move(other.m_Transport);
+                m_Registration = std::move(other.m_Registration);
+                m_ReactorMode = other.m_ReactorMode;
+            }
+            return *this;
+        }
 
         bool Bind(const SocketAddr &address);
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout);
         // Sends exactly one datagram; the returned size is the number of bytes sent.
         std::size_t SendTo(const SocketAddr &peer, const void *data, std::size_t size);
+        SocketIoResult<std::size_t> TrySendTo(
+            const SocketAddr &peer,
+            const void *data,
+            std::size_t size);
+        void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
         // Reports the sender and whether the supplied buffer truncated the datagram.
         DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity);
+        SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+            void *data,
+            std::size_t capacity);
         void Close() noexcept;
         bool IsValid() const noexcept;
         std::optional<SocketAddr> GetLocalAddr() const;
 
     private:
         std::unique_ptr<DatagramTransport> m_Transport;
+        IoContext::Registration m_Registration;
+        bool m_ReactorMode = false;
     };
 
     class DatagramServer
@@ -186,18 +330,41 @@ namespace X_Y
         DatagramServer(const DatagramServer &) = delete;
         DatagramServer &operator=(const DatagramServer &) = delete;
         DatagramServer(DatagramServer &&) noexcept = default;
-        DatagramServer &operator=(DatagramServer &&) noexcept = default;
+        DatagramServer &operator=(DatagramServer &&other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Registration.Reset();
+                m_Transport = std::move(other.m_Transport);
+                m_Registration = std::move(other.m_Registration);
+                m_ReactorMode = other.m_ReactorMode;
+            }
+            return *this;
+        }
 
         bool Bind(const SocketAddr &address);
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout);
         // Sends exactly one datagram; the returned size is the number of bytes sent.
         std::size_t SendTo(const SocketAddr &peer, const void *data, std::size_t size);
+        SocketIoResult<std::size_t> TrySendTo(
+            const SocketAddr &peer,
+            const void *data,
+            std::size_t size);
+        void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
         // Reports the sender and whether the supplied buffer truncated the datagram.
         DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity);
+        SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+            void *data,
+            std::size_t capacity);
         void Close() noexcept;
         bool IsBound() const noexcept;
         std::optional<SocketAddr> GetLocalAddr() const;
 
     private:
         std::unique_ptr<DatagramTransport> m_Transport;
+        IoContext::Registration m_Registration;
+        bool m_ReactorMode = false;
     };
 }

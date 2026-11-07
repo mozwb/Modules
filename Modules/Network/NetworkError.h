@@ -17,4 +17,10 @@ namespace X_Y
         std::string m_Operation;
         int m_ErrorCode;
     };
+
+    class NetworkTimeoutError final : public NetworkError
+    {
+    public:
+        NetworkTimeoutError(std::string operation, int errorCode, std::string detail);
+    };
 }

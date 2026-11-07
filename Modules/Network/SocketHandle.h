@@ -4,8 +4,10 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <chrono>
 #include <memory>
 #include <optional>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -51,10 +53,28 @@ namespace X_Y
             return SocketHandle(std::move(accepted));
         }
 
+        SocketIoResult<SocketHandle> TryAccept()
+        {
+            auto accepted = RequireImpl().TryAccept();
+            if (accepted.status != SocketIoStatus::Completed)
+                return {accepted.status, std::nullopt};
+            if (!accepted.value || !*accepted.value)
+                throw std::logic_error("Socket implementation accepted without a socket");
+            return {
+                SocketIoStatus::Completed,
+                std::optional<SocketHandle>(
+                    SocketHandle(std::move(*accepted.value)))};
+        }
+
         // Performs one send/receive operation; TCP may transfer fewer bytes than requested.
         std::size_t SendSome(const void *data, std::size_t size)
         {
             return RequireImpl().SendSome(data, size);
+        }
+
+        SocketIoResult<std::size_t> TrySendSome(const void *data, std::size_t size)
+        {
+            return RequireImpl().TrySendSome(data, size);
         }
 
         // Returns 0 when the peer has shut down its sending side.
@@ -63,9 +83,22 @@ namespace X_Y
             return RequireImpl().ReceiveSome(data, size);
         }
 
+        SocketIoResult<std::size_t> TryReceiveSome(void *data, std::size_t size)
+        {
+            return RequireImpl().TryReceiveSome(data, size);
+        }
+
         std::size_t SendTo(const SocketAddr &peer, const void *data, std::size_t size)
         {
             return RequireImpl().SendTo(peer, data, size);
+        }
+
+        SocketIoResult<std::size_t> TrySendTo(
+            const SocketAddr &peer,
+            const void *data,
+            std::size_t size)
+        {
+            return RequireImpl().TrySendTo(peer, data, size);
         }
 
         DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity)
@@ -73,9 +106,32 @@ namespace X_Y
             return RequireImpl().ReceiveFrom(data, capacity);
         }
 
+        SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+            void *data,
+            std::size_t capacity)
+        {
+            return RequireImpl().TryReceiveFrom(data, capacity);
+        }
+
         bool SetNonBlocking(bool enable)
         {
             return m_Impl && m_Impl->SetNonBlocking(enable);
+        }
+
+        // A zero timeout disables the timeout; negative values are invalid.
+        bool SetTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout)
+        {
+            if (direction != SocketTimeoutDirection::Send &&
+                direction != SocketTimeoutDirection::Receive)
+                throw std::invalid_argument("Unsupported socket timeout direction");
+            if (timeout.count() < 0)
+                throw std::invalid_argument("Socket timeout must not be negative");
+            if (static_cast<std::uint64_t>(timeout.count()) >
+                std::numeric_limits<std::uint32_t>::max())
+                throw std::out_of_range("Socket timeout exceeds the supported range");
+            return m_Impl && m_Impl->SetTimeout(direction, timeout);
         }
 
         bool SetOption(SocketOptionId option, const void *val, SocketLen optlen)

@@ -35,6 +35,32 @@ namespace X_Y
             throw NetworkError(operation, error, SocketErrorText(error));
         }
 
+        void ValidateTimeout(
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout)
+        {
+            if (direction != SocketTimeoutDirection::Send &&
+                direction != SocketTimeoutDirection::Receive)
+                throw std::invalid_argument("Unsupported socket timeout direction");
+            if (timeout.count() < 0)
+                throw std::invalid_argument("Socket timeout must not be negative");
+            if (static_cast<std::uint64_t>(timeout.count()) >
+                std::numeric_limits<std::uint32_t>::max())
+                throw std::out_of_range("Socket timeout exceeds the supported range");
+        }
+
+        void ApplyTimeout(
+            SocketHandle &socket,
+            SocketTimeoutDirection direction,
+            std::chrono::milliseconds timeout)
+        {
+            if (!socket.SetTimeout(direction, timeout))
+                throw NetworkError(
+                    "setsockopt",
+                    0,
+                    "failed to apply socket timeout");
+        }
+
 #ifdef _WIN32
         class WinsockSession
         {
@@ -81,8 +107,8 @@ namespace X_Y
         {
         public:
             SocketStreamTransport() = default;
-            explicit SocketStreamTransport(SocketHandle socket)
-                : m_Socket(std::move(socket))
+            explicit SocketStreamTransport(SocketHandle socket, bool nonBlocking = false)
+                : m_Socket(std::move(socket)), m_NonBlocking(nonBlocking)
             {
             }
 
@@ -94,6 +120,7 @@ namespace X_Y
                     throw std::invalid_argument("Stream port must not be zero");
 
                 Close();
+                m_NonBlocking = false;
 #ifdef _WIN32
                 WinsockSession winsock;
 #endif
@@ -132,6 +159,10 @@ namespace X_Y
                     try
                     {
                         SocketHandle socket(address->family, SocketType::Stream);
+                        if (m_SendTimeout.count() != 0)
+                            ApplyTimeout(socket, SocketTimeoutDirection::Send, m_SendTimeout);
+                        if (m_ReceiveTimeout.count() != 0)
+                            ApplyTimeout(socket, SocketTimeoutDirection::Receive, m_ReceiveTimeout);
                         socket.Connect(*address);
                         m_Socket.emplace(std::move(socket));
                         return;
@@ -147,14 +178,56 @@ namespace X_Y
                 throw NetworkError("connect", 0, "no usable address was returned");
             }
 
+            bool SetTimeout(
+                SocketTimeoutDirection direction,
+                std::chrono::milliseconds timeout) override
+            {
+                ValidateTimeout(direction, timeout);
+                if (m_Socket && !m_Socket->SetTimeout(direction, timeout))
+                    return false;
+
+                if (direction == SocketTimeoutDirection::Send)
+                    m_SendTimeout = timeout;
+                else
+                    m_ReceiveTimeout = timeout;
+                return true;
+            }
+
             std::size_t SendSome(const void *data, std::size_t size) override
             {
+                EnsureBlockingMode();
                 return RequireSocket().SendSome(data, size);
             }
 
             std::size_t ReceiveSome(void *data, std::size_t capacity) override
             {
+                EnsureBlockingMode();
                 return RequireSocket().ReceiveSome(data, capacity);
+            }
+
+            SocketIoResult<std::size_t> TrySendSome(
+                const void *data,
+                std::size_t size) override
+            {
+                EnsureNonBlockingSocket();
+                return RequireSocket().TrySendSome(data, size);
+            }
+
+            SocketIoResult<std::size_t> TryReceiveSome(
+                void *data,
+                std::size_t capacity) override
+            {
+                EnsureNonBlockingSocket();
+                return RequireSocket().TryReceiveSome(data, capacity);
+            }
+
+            IoContext::Registration Watch(
+                IoContext &context,
+                IoInterest interest,
+                IoContext::Handler handler) override
+            {
+                EnsureNonBlockingSocket();
+                return context.Watch(RequireSocket(), interest, std::move(handler));
             }
 
             void Close() noexcept override
@@ -182,6 +255,24 @@ namespace X_Y
             }
 
         private:
+            void EnsureNonBlockingSocket()
+            {
+                auto &socket = RequireSocket();
+                if (!m_NonBlocking && !socket.SetNonBlocking(true))
+                    throw NetworkError(
+                        "set non-blocking",
+                        0,
+                        "failed to enable non-blocking mode for stream endpoint");
+                m_NonBlocking = true;
+            }
+
+            void EnsureBlockingMode() const
+            {
+                if (m_NonBlocking)
+                    throw std::logic_error(
+                        "Blocking stream operations cannot be used after Reactor mode is enabled");
+            }
+
             SocketHandle &RequireSocket()
             {
                 if (!m_Socket || !m_Socket->IsValid())
@@ -190,6 +281,9 @@ namespace X_Y
             }
 
             std::optional<SocketHandle> m_Socket;
+            bool m_NonBlocking = false;
+            std::chrono::milliseconds m_SendTimeout{0};
+            std::chrono::milliseconds m_ReceiveTimeout{0};
         };
 
         class SocketStreamServerTransport final : public StreamServerTransport
@@ -198,6 +292,7 @@ namespace X_Y
             bool Listen(const SocketAddr &address, int backlog) override
             {
                 Close();
+                m_NonBlocking = false;
                 if (backlog <= 0)
                     return false;
 
@@ -215,15 +310,72 @@ namespace X_Y
                 return true;
             }
 
+            bool SetTimeout(
+                SocketTimeoutDirection direction,
+                std::chrono::milliseconds timeout) override
+            {
+                ValidateTimeout(direction, timeout);
+                if (direction == SocketTimeoutDirection::Send)
+                    m_SendTimeout = timeout;
+                else
+                    m_ReceiveTimeout = timeout;
+                return true;
+            }
+
             std::unique_ptr<StreamTransport> Accept() override
             {
                 if (!m_Socket || !m_Socket->IsValid())
                     throw std::logic_error("Stream server is not listening");
+                EnsureBlockingMode();
 
                 auto accepted = m_Socket->Accept();
                 if (!accepted)
                     return nullptr;
-                return std::make_unique<SocketStreamTransport>(std::move(*accepted));
+                auto connection =
+                    std::make_unique<SocketStreamTransport>(std::move(*accepted));
+                if (m_SendTimeout.count() != 0 &&
+                    !connection->SetTimeout(SocketTimeoutDirection::Send, m_SendTimeout))
+                    throw NetworkError("setsockopt", 0, "failed to configure accepted socket");
+                if (m_ReceiveTimeout.count() != 0 &&
+                    !connection->SetTimeout(
+                        SocketTimeoutDirection::Receive,
+                        m_ReceiveTimeout))
+                    throw NetworkError("setsockopt", 0, "failed to configure accepted socket");
+                return connection;
+            }
+
+            SocketIoResult<std::unique_ptr<StreamTransport>> TryAccept() override
+            {
+                if (!m_Socket || !m_Socket->IsValid())
+                    throw std::logic_error("Stream server is not listening");
+                EnsureNonBlockingSocket();
+
+                auto accepted = m_Socket->TryAccept();
+                if (accepted.status != SocketIoStatus::Completed)
+                    return {accepted.status, std::nullopt};
+                if (!accepted.value || !accepted.value->IsValid())
+                    throw std::logic_error("Socket implementation accepted without a socket");
+
+                auto connection = std::make_unique<SocketStreamTransport>(
+                    std::move(*accepted.value),
+                    true);
+                if (m_SendTimeout.count() != 0 &&
+                    !connection->SetTimeout(SocketTimeoutDirection::Send, m_SendTimeout))
+                    throw NetworkError(
+                        "setsockopt",
+                        0,
+                        "failed to configure accepted socket");
+                if (m_ReceiveTimeout.count() != 0 &&
+                    !connection->SetTimeout(
+                        SocketTimeoutDirection::Receive,
+                        m_ReceiveTimeout))
+                    throw NetworkError(
+                        "setsockopt",
+                        0,
+                        "failed to configure accepted socket");
+                return {
+                    SocketIoStatus::Completed,
+                    std::unique_ptr<StreamTransport>(std::move(connection))};
             }
 
             void Close() noexcept override
@@ -233,6 +385,17 @@ namespace X_Y
                     m_Socket->Close();
                     m_Socket.reset();
                 }
+            }
+
+            IoContext::Registration Watch(
+                IoContext &context,
+                IoInterest interest,
+                IoContext::Handler handler) override
+            {
+                if (!m_Socket || !m_Socket->IsValid())
+                    throw std::logic_error("Stream server is not listening");
+                EnsureNonBlockingSocket();
+                return context.Watch(*m_Socket, interest, std::move(handler));
             }
 
             bool IsListening() const noexcept override
@@ -246,7 +409,27 @@ namespace X_Y
             }
 
         private:
+            void EnsureNonBlockingSocket()
+            {
+                if (!m_NonBlocking && !m_Socket->SetNonBlocking(true))
+                    throw NetworkError(
+                        "set non-blocking",
+                        0,
+                        "failed to enable non-blocking mode for stream server");
+                m_NonBlocking = true;
+            }
+
+            void EnsureBlockingMode() const
+            {
+                if (m_NonBlocking)
+                    throw std::logic_error(
+                        "Blocking accept cannot be used after Reactor mode is enabled");
+            }
+
             std::optional<SocketHandle> m_Socket;
+            bool m_NonBlocking = false;
+            std::chrono::milliseconds m_SendTimeout{0};
+            std::chrono::milliseconds m_ReceiveTimeout{0};
         };
 
         class SocketDatagramTransport final : public DatagramTransport
@@ -259,10 +442,19 @@ namespace X_Y
 
             bool Bind(const SocketAddr &address) override
             {
+                EnsureBlockingMode();
                 const bool bound = m_Socket.Bind(address);
                 if (bound)
                     m_IsBound = true;
                 return bound;
+            }
+
+            bool SetTimeout(
+                SocketTimeoutDirection direction,
+                std::chrono::milliseconds timeout) override
+            {
+                ValidateTimeout(direction, timeout);
+                return m_Socket.SetTimeout(direction, timeout);
             }
 
             std::size_t SendTo(
@@ -270,12 +462,40 @@ namespace X_Y
                 const void *data,
                 std::size_t size) override
             {
+                EnsureBlockingMode();
                 return m_Socket.SendTo(peer, data, size);
+            }
+
+            SocketIoResult<std::size_t> TrySendTo(
+                const SocketAddr &peer,
+                const void *data,
+                std::size_t size) override
+            {
+                EnsureNonBlockingSocket();
+                return m_Socket.TrySendTo(peer, data, size);
             }
 
             DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity) override
             {
+                EnsureBlockingMode();
                 return m_Socket.ReceiveFrom(data, capacity);
+            }
+
+            SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+                void *data,
+                std::size_t capacity) override
+            {
+                EnsureNonBlockingSocket();
+                return m_Socket.TryReceiveFrom(data, capacity);
+            }
+
+            IoContext::Registration Watch(
+                IoContext &context,
+                IoInterest interest,
+                IoContext::Handler handler) override
+            {
+                EnsureNonBlockingSocket();
+                return context.Watch(m_Socket, interest, std::move(handler));
             }
 
             void Close() noexcept override
@@ -293,8 +513,26 @@ namespace X_Y
             }
 
         private:
+            void EnsureNonBlockingSocket()
+            {
+                if (!m_NonBlocking && !m_Socket.SetNonBlocking(true))
+                    throw NetworkError(
+                        "set non-blocking",
+                        0,
+                        "failed to enable non-blocking mode for datagram endpoint");
+                m_NonBlocking = true;
+            }
+
+            void EnsureBlockingMode() const
+            {
+                if (m_NonBlocking)
+                    throw std::logic_error(
+                        "Blocking datagram operations cannot be used after Reactor mode is enabled");
+            }
+
             SocketHandle m_Socket;
             bool m_IsBound = false;
+            bool m_NonBlocking = false;
         };
 
         void EnsureStreamTransport(const std::unique_ptr<StreamTransport> &transport)
@@ -307,6 +545,14 @@ namespace X_Y
         {
             if (buffer.Capacity != 0 && buffer.Data == nullptr)
                 throw std::invalid_argument("Stream receive buffer has no allocated storage");
+        }
+
+        void EnsureBlockingEndpointMode(bool reactorMode, const char *endpoint)
+        {
+            if (reactorMode)
+                throw std::logic_error(
+                    std::string("Blocking operations cannot be used after Reactor mode is enabled for ") +
+                    endpoint);
         }
 
         void SendAllBytes(StreamTransport &transport, const void *data, std::size_t size)
@@ -365,6 +611,7 @@ namespace X_Y
 
     std::size_t StreamConnection::SendSome(const void *data, std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream connection");
         if (!m_Transport || !m_Transport->IsConnected())
             throw std::logic_error("Stream connection is closed");
         return m_Transport->SendSome(data, size);
@@ -372,13 +619,55 @@ namespace X_Y
 
     std::size_t StreamConnection::ReceiveSome(void *data, std::size_t capacity)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream connection");
         if (!m_Transport || !m_Transport->IsConnected())
             throw std::logic_error("Stream connection is closed");
         return m_Transport->ReceiveSome(data, capacity);
     }
 
+    SocketIoResult<std::size_t> StreamConnection::TrySendSome(
+        const void *data,
+        std::size_t size)
+    {
+        if (!m_Transport || !m_Transport->IsConnected())
+            throw std::logic_error("Stream connection is closed");
+        m_ReactorMode = true;
+        return m_Transport->TrySendSome(data, size);
+    }
+
+    SocketIoResult<std::size_t> StreamConnection::TryReceiveSome(
+        void *data,
+        std::size_t capacity)
+    {
+        if (!m_Transport || !m_Transport->IsConnected())
+            throw std::logic_error("Stream connection is closed");
+        m_ReactorMode = true;
+        return m_Transport->TryReceiveSome(data, capacity);
+    }
+
+    void StreamConnection::Watch(
+        IoContext &context,
+        IoInterest interest,
+        IoContext::Handler handler)
+    {
+        if (!m_Transport || !m_Transport->IsConnected())
+            throw std::logic_error("Stream connection is closed");
+        m_Registration.Reset();
+        m_Registration = m_Transport->Watch(context, interest, std::move(handler));
+        m_ReactorMode = true;
+    }
+
+    bool StreamConnection::SetTimeout(
+        SocketTimeoutDirection direction,
+        std::chrono::milliseconds timeout)
+    {
+        ValidateTimeout(direction, timeout);
+        return m_Transport && m_Transport->SetTimeout(direction, timeout);
+    }
+
     void StreamConnection::SendAll(const void *data, std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream connection");
         if (!m_Transport || !m_Transport->IsConnected())
             throw std::logic_error("Stream connection is closed");
         SendAllBytes(*m_Transport, data, size);
@@ -393,6 +682,7 @@ namespace X_Y
 
     std::uint64_t StreamConnection::ReceiveSome(Buffer &buffer)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream connection");
         if (!m_Transport || !m_Transport->IsConnected())
             throw std::logic_error("Stream connection is closed");
         return ReceiveBuffer(*m_Transport, buffer);
@@ -412,11 +702,23 @@ namespace X_Y
     void StreamClient::Connect(const std::string &host, std::uint16_t port)
     {
         EnsureStreamTransport(m_Transport);
+        m_Registration.Reset();
+        m_ReactorMode = false;
         m_Transport->Connect(host, port);
+    }
+
+    bool StreamClient::SetTimeout(
+        SocketTimeoutDirection direction,
+        std::chrono::milliseconds timeout)
+    {
+        ValidateTimeout(direction, timeout);
+        EnsureStreamTransport(m_Transport);
+        return m_Transport->SetTimeout(direction, timeout);
     }
 
     std::size_t StreamClient::SendSome(const void *data, std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream client");
         EnsureStreamTransport(m_Transport);
         if (!m_Transport->IsConnected())
             throw std::logic_error("Stream client is not connected");
@@ -425,14 +727,51 @@ namespace X_Y
 
     std::size_t StreamClient::ReceiveSome(void *data, std::size_t capacity)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream client");
         EnsureStreamTransport(m_Transport);
         if (!m_Transport->IsConnected())
             throw std::logic_error("Stream client is not connected");
         return m_Transport->ReceiveSome(data, capacity);
     }
 
+    SocketIoResult<std::size_t> StreamClient::TrySendSome(
+        const void *data,
+        std::size_t size)
+    {
+        EnsureStreamTransport(m_Transport);
+        if (!m_Transport->IsConnected())
+            throw std::logic_error("Stream client is not connected");
+        m_ReactorMode = true;
+        return m_Transport->TrySendSome(data, size);
+    }
+
+    SocketIoResult<std::size_t> StreamClient::TryReceiveSome(
+        void *data,
+        std::size_t capacity)
+    {
+        EnsureStreamTransport(m_Transport);
+        if (!m_Transport->IsConnected())
+            throw std::logic_error("Stream client is not connected");
+        m_ReactorMode = true;
+        return m_Transport->TryReceiveSome(data, capacity);
+    }
+
+    void StreamClient::Watch(
+        IoContext &context,
+        IoInterest interest,
+        IoContext::Handler handler)
+    {
+        EnsureStreamTransport(m_Transport);
+        if (!m_Transport->IsConnected())
+            throw std::logic_error("Stream client is not connected");
+        m_Registration.Reset();
+        m_Registration = m_Transport->Watch(context, interest, std::move(handler));
+        m_ReactorMode = true;
+    }
+
     void StreamClient::SendAll(const void *data, std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream client");
         EnsureStreamTransport(m_Transport);
         if (!m_Transport->IsConnected())
             throw std::logic_error("Stream client is not connected");
@@ -448,6 +787,7 @@ namespace X_Y
 
     std::uint64_t StreamClient::ReceiveSome(Buffer &buffer)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream client");
         EnsureStreamTransport(m_Transport);
         if (!m_Transport->IsConnected())
             throw std::logic_error("Stream client is not connected");
@@ -456,6 +796,7 @@ namespace X_Y
 
     void StreamClient::Close() noexcept
     {
+        m_Registration.Reset();
         if (m_Transport)
             m_Transport->Close();
     }
@@ -491,11 +832,22 @@ namespace X_Y
     {
         if (!m_Transport)
             throw std::logic_error("Stream server transport is not configured");
+        m_Registration.Reset();
+        m_ReactorMode = false;
         return m_Transport->Listen(address, backlog);
+    }
+
+    bool StreamServer::SetTimeout(
+        SocketTimeoutDirection direction,
+        std::chrono::milliseconds timeout)
+    {
+        ValidateTimeout(direction, timeout);
+        return m_Transport && m_Transport->SetTimeout(direction, timeout);
     }
 
     std::optional<StreamConnection> StreamServer::Accept()
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "stream server");
         if (!m_Transport || !m_Transport->IsListening())
             throw std::logic_error("Stream server is not listening");
 
@@ -505,8 +857,40 @@ namespace X_Y
         return StreamConnection(std::move(accepted));
     }
 
+    SocketIoResult<StreamConnection> StreamServer::TryAccept()
+    {
+        if (!m_Transport || !m_Transport->IsListening())
+            throw std::logic_error("Stream server is not listening");
+
+        m_ReactorMode = true;
+        auto accepted = m_Transport->TryAccept();
+        if (accepted.status != SocketIoStatus::Completed)
+            return {accepted.status, std::nullopt};
+        if (!accepted.value || !*accepted.value)
+            throw std::logic_error("Stream server transport accepted without a connection");
+
+        SocketIoResult<StreamConnection> result;
+        result.status = SocketIoStatus::Completed;
+        result.value.emplace(StreamConnection(std::move(*accepted.value)));
+        result.value->m_ReactorMode = true;
+        return result;
+    }
+
+    void StreamServer::Watch(
+        IoContext &context,
+        IoInterest interest,
+        IoContext::Handler handler)
+    {
+        if (!m_Transport || !m_Transport->IsListening())
+            throw std::logic_error("Stream server is not listening");
+        m_Registration.Reset();
+        m_Registration = m_Transport->Watch(context, interest, std::move(handler));
+        m_ReactorMode = true;
+    }
+
     void StreamServer::Close() noexcept
     {
+        m_Registration.Reset();
         if (m_Transport)
             m_Transport->Close();
     }
@@ -530,9 +914,18 @@ namespace X_Y
 
     bool DatagramClient::Bind(const SocketAddr &address)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram client");
         if (!m_Transport)
             throw std::logic_error("Datagram client transport is not configured");
         return m_Transport->Bind(address);
+    }
+
+    bool DatagramClient::SetTimeout(
+        SocketTimeoutDirection direction,
+        std::chrono::milliseconds timeout)
+    {
+        ValidateTimeout(direction, timeout);
+        return m_Transport && m_Transport->SetTimeout(direction, timeout);
     }
 
     std::size_t DatagramClient::SendTo(
@@ -540,20 +933,56 @@ namespace X_Y
         const void *data,
         std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram client");
         if (!m_Transport)
             throw std::logic_error("Datagram client transport is not configured");
         return m_Transport->SendTo(peer, data, size);
     }
 
+    SocketIoResult<std::size_t> DatagramClient::TrySendTo(
+        const SocketAddr &peer,
+        const void *data,
+        std::size_t size)
+    {
+        if (!m_Transport || !m_Transport->IsValid())
+            throw std::logic_error("Datagram client is closed");
+        m_ReactorMode = true;
+        return m_Transport->TrySendTo(peer, data, size);
+    }
+
     DatagramReceiveResult DatagramClient::ReceiveFrom(void *data, std::size_t capacity)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram client");
         if (!m_Transport)
             throw std::logic_error("Datagram client transport is not configured");
         return m_Transport->ReceiveFrom(data, capacity);
     }
 
+    SocketIoResult<DatagramReceiveResult> DatagramClient::TryReceiveFrom(
+        void *data,
+        std::size_t capacity)
+    {
+        if (!m_Transport || !m_Transport->IsValid())
+            throw std::logic_error("Datagram client is closed");
+        m_ReactorMode = true;
+        return m_Transport->TryReceiveFrom(data, capacity);
+    }
+
+    void DatagramClient::Watch(
+        IoContext &context,
+        IoInterest interest,
+        IoContext::Handler handler)
+    {
+        if (!m_Transport || !m_Transport->IsValid())
+            throw std::logic_error("Datagram client is closed");
+        m_Registration.Reset();
+        m_Registration = m_Transport->Watch(context, interest, std::move(handler));
+        m_ReactorMode = true;
+    }
+
     void DatagramClient::Close() noexcept
     {
+        m_Registration.Reset();
         if (m_Transport)
             m_Transport->Close();
     }
@@ -577,9 +1006,18 @@ namespace X_Y
 
     bool DatagramServer::Bind(const SocketAddr &address)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram server");
         if (!m_Transport)
             throw std::logic_error("Datagram server transport is not configured");
         return m_Transport->Bind(address);
+    }
+
+    bool DatagramServer::SetTimeout(
+        SocketTimeoutDirection direction,
+        std::chrono::milliseconds timeout)
+    {
+        ValidateTimeout(direction, timeout);
+        return m_Transport && m_Transport->SetTimeout(direction, timeout);
     }
 
     std::size_t DatagramServer::SendTo(
@@ -587,20 +1025,56 @@ namespace X_Y
         const void *data,
         std::size_t size)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram server");
         if (!m_Transport)
             throw std::logic_error("Datagram server transport is not configured");
         return m_Transport->SendTo(peer, data, size);
     }
 
+    SocketIoResult<std::size_t> DatagramServer::TrySendTo(
+        const SocketAddr &peer,
+        const void *data,
+        std::size_t size)
+    {
+        if (!m_Transport || !m_Transport->IsBound())
+            throw std::logic_error("Datagram server is not bound");
+        m_ReactorMode = true;
+        return m_Transport->TrySendTo(peer, data, size);
+    }
+
     DatagramReceiveResult DatagramServer::ReceiveFrom(void *data, std::size_t capacity)
     {
+        EnsureBlockingEndpointMode(m_ReactorMode, "datagram server");
         if (!m_Transport)
             throw std::logic_error("Datagram server transport is not configured");
         return m_Transport->ReceiveFrom(data, capacity);
     }
 
+    SocketIoResult<DatagramReceiveResult> DatagramServer::TryReceiveFrom(
+        void *data,
+        std::size_t capacity)
+    {
+        if (!m_Transport || !m_Transport->IsBound())
+            throw std::logic_error("Datagram server is not bound");
+        m_ReactorMode = true;
+        return m_Transport->TryReceiveFrom(data, capacity);
+    }
+
+    void DatagramServer::Watch(
+        IoContext &context,
+        IoInterest interest,
+        IoContext::Handler handler)
+    {
+        if (!m_Transport || !m_Transport->IsBound())
+            throw std::logic_error("Datagram server is not bound");
+        m_Registration.Reset();
+        m_Registration = m_Transport->Watch(context, interest, std::move(handler));
+        m_ReactorMode = true;
+    }
+
     void DatagramServer::Close() noexcept
     {
+        m_Registration.Reset();
         if (m_Transport)
             m_Transport->Close();
     }

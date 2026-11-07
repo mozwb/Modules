@@ -24,8 +24,13 @@ namespace X_Y
             return "Winsock error " + std::to_string(error);
         }
 
-        [[noreturn]] void ThrowSocketError(const char *operation, int error)
+        [[noreturn]] void ThrowSocketError(
+            const char *operation,
+            int error,
+            bool timedOut = false)
         {
+            if (timedOut)
+                throw NetworkTimeoutError(operation, error, SocketErrorText(error));
             throw NetworkError(operation, error, SocketErrorText(error));
         }
 
@@ -209,6 +214,53 @@ namespace X_Y
                 }
             }
 
+            SocketIoResult<std::unique_ptr<SocketHandleImpl>> TryAccept() override
+            {
+                EnsureNonBlocking();
+                if (m_Type != SocketType::Stream)
+                    throw std::logic_error("Accept requires a stream socket");
+
+                for (;;)
+                {
+                    sockaddr_storage peer{};
+                    int peerLength = sizeof(peer);
+                    const SOCKET accepted = ::accept(
+                        m_Socket,
+                        reinterpret_cast<sockaddr *>(&peer),
+                        &peerLength);
+                    if (accepted == INVALID_SOCKET)
+                    {
+                        const int error = WSAGetLastError();
+                        if (error == WSAEWOULDBLOCK)
+                            return {SocketIoStatus::WouldBlock, std::nullopt};
+                        if (error == WSAEINTR)
+                            continue;
+                        ThrowSocketError("accept", error);
+                    }
+
+                    const AddressFamily family =
+                        peer.ss_family == AF_INET ? AddressFamily::IPv4 : AddressFamily::IPv6;
+                    std::unique_ptr<WindowsSocketHandleImpl> connection;
+                    try
+                    {
+                        connection = std::make_unique<WindowsSocketHandleImpl>(
+                            accepted,
+                            family,
+                            SocketType::Stream);
+                    }
+                    catch (...)
+                    {
+                        closesocket(accepted);
+                        throw;
+                    }
+                    if (!connection->SetNonBlocking(true))
+                        ThrowSocketError("ioctlsocket", WSAGetLastError());
+                    return {
+                        SocketIoStatus::Completed,
+                        std::unique_ptr<SocketHandleImpl>(std::move(connection))};
+                }
+            }
+
             std::size_t SendSome(const void *data, std::size_t size) override
             {
                 EnsureValid();
@@ -233,6 +285,45 @@ namespace X_Y
                     const int error = WSAGetLastError();
                     if (error == WSAEINTR)
                         continue;
+                    ThrowSocketError(
+                        "send",
+                        error,
+                        m_SendTimeout.count() != 0 && error == WSAETIMEDOUT);
+                }
+            }
+
+            SocketIoResult<std::size_t> TrySendSome(
+                const void *data,
+                std::size_t size) override
+            {
+                EnsureNonBlocking();
+                if (m_Type != SocketType::Stream)
+                    throw std::logic_error("SendSome requires a stream socket");
+                if (size == 0)
+                    return {SocketIoStatus::Completed, std::size_t{0}};
+                if (data == nullptr)
+                    throw std::invalid_argument("Socket send data is null");
+
+                const int chunkSize = static_cast<int>(std::min(
+                    size,
+                    static_cast<std::size_t>(std::numeric_limits<int>::max())));
+                for (;;)
+                {
+                    const int result = ::send(
+                        m_Socket,
+                        static_cast<const char *>(data),
+                        chunkSize,
+                        0);
+                    if (result != SOCKET_ERROR)
+                        return {
+                            SocketIoStatus::Completed,
+                            static_cast<std::size_t>(result)};
+
+                    const int error = WSAGetLastError();
+                    if (error == WSAEINTR)
+                        continue;
+                    if (error == WSAEWOULDBLOCK)
+                        return {SocketIoStatus::WouldBlock, std::nullopt};
                     ThrowSocketError("send", error);
                 }
             }
@@ -261,6 +352,47 @@ namespace X_Y
                     const int error = WSAGetLastError();
                     if (error == WSAEINTR)
                         continue;
+                    ThrowSocketError(
+                        "recv",
+                        error,
+                        m_ReceiveTimeout.count() != 0 && error == WSAETIMEDOUT);
+                }
+            }
+
+            SocketIoResult<std::size_t> TryReceiveSome(
+                void *data,
+                std::size_t size) override
+            {
+                EnsureNonBlocking();
+                if (m_Type != SocketType::Stream)
+                    throw std::logic_error("ReceiveSome requires a stream socket");
+                if (size == 0)
+                    return {SocketIoStatus::Completed, std::size_t{0}};
+                if (data == nullptr)
+                    throw std::invalid_argument("Socket receive buffer is null");
+
+                const int chunkSize = static_cast<int>(std::min(
+                    size,
+                    static_cast<std::size_t>(std::numeric_limits<int>::max())));
+                for (;;)
+                {
+                    const int result = ::recv(
+                        m_Socket,
+                        static_cast<char *>(data),
+                        chunkSize,
+                        0);
+                    if (result == 0)
+                        return {SocketIoStatus::Closed, std::nullopt};
+                    if (result != SOCKET_ERROR)
+                        return {
+                            SocketIoStatus::Completed,
+                            static_cast<std::size_t>(result)};
+
+                    const int error = WSAGetLastError();
+                    if (error == WSAEINTR)
+                        continue;
+                    if (error == WSAEWOULDBLOCK)
+                        return {SocketIoStatus::WouldBlock, std::nullopt};
                     ThrowSocketError("recv", error);
                 }
             }
@@ -290,8 +422,53 @@ namespace X_Y
                     reinterpret_cast<const sockaddr *>(&nativePeer),
                     peerLength);
                 if (result == SOCKET_ERROR)
-                    ThrowSocketError("sendto", WSAGetLastError());
+                {
+                    const int error = WSAGetLastError();
+                    ThrowSocketError(
+                        "sendto",
+                        error,
+                        m_SendTimeout.count() != 0 && error == WSAETIMEDOUT);
+                }
                 return static_cast<std::size_t>(result);
+            }
+
+            SocketIoResult<std::size_t> TrySendTo(
+                const SocketAddr &peer,
+                const void *data,
+                std::size_t size) override
+            {
+                EnsureNonBlocking();
+                if (m_Type != SocketType::Datagram)
+                    throw std::logic_error("SendTo requires a datagram socket");
+                EnsureAddressFamily(peer, m_Family);
+                if (size != 0 && data == nullptr)
+                    throw std::invalid_argument("Socket send data is null");
+                if (size > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                    throw std::length_error("Datagram exceeds Winsock send limit");
+
+                sockaddr_storage nativePeer{};
+                int peerLength = 0;
+                ToNativeAddress(peer, nativePeer, peerLength);
+                for (;;)
+                {
+                    const int result = ::sendto(
+                        m_Socket,
+                        static_cast<const char *>(data),
+                        static_cast<int>(size),
+                        0,
+                        reinterpret_cast<const sockaddr *>(&nativePeer),
+                        peerLength);
+                    if (result != SOCKET_ERROR)
+                        return {
+                            SocketIoStatus::Completed,
+                            static_cast<std::size_t>(result)};
+                    const int error = WSAGetLastError();
+                    if (error == WSAEINTR)
+                        continue;
+                    if (error == WSAEWOULDBLOCK)
+                        return {SocketIoStatus::WouldBlock, std::nullopt};
+                    ThrowSocketError("sendto", error);
+                }
             }
 
             DatagramReceiveResult ReceiveFrom(void *data, std::size_t capacity) override
@@ -317,7 +494,10 @@ namespace X_Y
                 {
                     const int error = WSAGetLastError();
                     if (error != WSAEMSGSIZE)
-                        ThrowSocketError("recvfrom", error);
+                        ThrowSocketError(
+                            "recvfrom",
+                            error,
+                            m_ReceiveTimeout.count() != 0 && error == WSAETIMEDOUT);
                     return {capacity, FromNativeAddress(peer), true};
                 }
                 return {
@@ -326,12 +506,83 @@ namespace X_Y
                     false};
             }
 
+            SocketIoResult<DatagramReceiveResult> TryReceiveFrom(
+                void *data,
+                std::size_t capacity) override
+            {
+                EnsureNonBlocking();
+                if (m_Type != SocketType::Datagram)
+                    throw std::logic_error("ReceiveFrom requires a datagram socket");
+                if (capacity != 0 && data == nullptr)
+                    throw std::invalid_argument("Socket receive buffer is null");
+                if (capacity > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                    capacity = static_cast<std::size_t>(std::numeric_limits<int>::max());
+
+                sockaddr_storage peer{};
+                int peerLength = sizeof(peer);
+                const int result = ::recvfrom(
+                    m_Socket,
+                    static_cast<char *>(data),
+                    static_cast<int>(capacity),
+                    0,
+                    reinterpret_cast<sockaddr *>(&peer),
+                    &peerLength);
+                if (result == SOCKET_ERROR)
+                {
+                    const int error = WSAGetLastError();
+                    if (error == WSAEWOULDBLOCK)
+                        return {SocketIoStatus::WouldBlock, std::nullopt};
+                    if (error != WSAEMSGSIZE)
+                        ThrowSocketError("recvfrom", error);
+                    return {
+                        SocketIoStatus::Completed,
+                        DatagramReceiveResult{
+                            capacity,
+                            FromNativeAddress(peer),
+                            true}};
+                }
+                return {
+                    SocketIoStatus::Completed,
+                    DatagramReceiveResult{
+                        static_cast<std::size_t>(result),
+                        FromNativeAddress(peer),
+                        false}};
+            }
+
+            bool SetTimeout(
+                SocketTimeoutDirection direction,
+                std::chrono::milliseconds timeout) override
+            {
+                if (!IsValid())
+                    return false;
+
+                const DWORD milliseconds = static_cast<DWORD>(timeout.count());
+                const int option =
+                    direction == SocketTimeoutDirection::Send ? SO_SNDTIMEO : SO_RCVTIMEO;
+                if (::setsockopt(
+                        m_Socket,
+                        SOL_SOCKET,
+                        option,
+                        reinterpret_cast<const char *>(&milliseconds),
+                        sizeof(milliseconds)) == SOCKET_ERROR)
+                    return false;
+
+                if (direction == SocketTimeoutDirection::Send)
+                    m_SendTimeout = timeout;
+                else
+                    m_ReceiveTimeout = timeout;
+                return true;
+            }
+
             bool SetNonBlocking(bool enable) override
             {
                 if (!IsValid())
                     return false;
                 u_long value = enable ? 1UL : 0UL;
-                return ioctlsocket(m_Socket, FIONBIO, &value) == 0;
+                if (ioctlsocket(m_Socket, FIONBIO, &value) != 0)
+                    return false;
+                m_NonBlocking = enable;
+                return true;
             }
 
             bool SetOption(SocketOptionId option, const void *val, SocketLen optlen) override
@@ -407,6 +658,14 @@ namespace X_Y
                     throw std::logic_error("Socket handle is closed");
             }
 
+            void EnsureNonBlocking() const
+            {
+                EnsureValid();
+                if (!m_NonBlocking)
+                    throw std::logic_error(
+                        "Try socket operations require non-blocking mode");
+            }
+
             std::optional<SocketAddr> GetSocketAddress(bool peer) const
             {
                 sockaddr_storage nativeAddr{};
@@ -436,6 +695,9 @@ namespace X_Y
             AddressFamily m_Family;
             SocketType m_Type;
             SOCKET m_Socket = INVALID_SOCKET;
+            bool m_NonBlocking = false;
+            std::chrono::milliseconds m_SendTimeout{0};
+            std::chrono::milliseconds m_ReceiveTimeout{0};
         };
     }
 
