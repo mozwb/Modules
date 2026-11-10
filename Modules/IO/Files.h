@@ -160,6 +160,8 @@ namespace X_Y
         std::vector<XPath> ListMatching(const std::string &pattern) const;
         // 列出目录下的所有普通文件；recursive=true 时递归子目录
         std::vector<XPath> ListFiles(bool recursive = true) const;
+        // 列出目录下的所有普通文件；depth>0 时限制深度，depth=0 时只列当前目录，depth<0 时无限制
+        std::vector<XPath> ListFiles(int depth = 0) const;
         // 以自身为根渲染目录树；rootName 非空时作为首行
         std::string ToTree(const std::string &rootName = "") const
         {

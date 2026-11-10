@@ -273,6 +273,40 @@ namespace X_Y
         }
         return files;
     }
+    // 列出目录下的所有普通文件；depth>0 时限制深度，depth=0 时只列当前目录，depth<0 时无限制
+    std::vector<XPath> XPath::ListFiles(int depth) const
+    {
+        if (!IsDirectory())
+            return {};
+        if (depth < 0)
+            return ListFiles(true);
+
+        std::vector<XPath> files;
+        std::vector<XPath> directories{*this};
+
+        for (int level = 0; !directories.empty(); ++level)
+        {
+            std::vector<XPath> nextDirectories;
+
+            for (const auto &directory : directories)
+            {
+                for (const auto &entry : directory.ListXPaths())
+                {
+                    if (entry.IsFile())
+                        files.push_back(entry);
+                    else if (level < depth && entry.IsDirectory())
+                        nextDirectories.push_back(entry);
+                }
+            }
+
+            if (level >= depth)
+                break;
+
+            directories = std::move(nextDirectories);
+        }
+
+        return files;
+    }
     std::vector<XPath> XPath::ListMatching(const std::string &pattern) const
     {
         std::vector<XPath> matchingEntries;

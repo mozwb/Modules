@@ -29,8 +29,8 @@ Files.h 管路径和整文件，Stream.h 管一段段字节，两个头同属 IO
 ────────────────────────────────────────────────────────────────
 几条约定
 
-. 公开头只带 <cstdint> / <memory> / <optional> / <string_view>；
-  <fstream> 和 <filesystem> 全部藏在 src/Stream.cpp。
+. 公开头只带 <cstdint> / <filesystem> / <memory> / <optional>；
+  <fstream> 藏在 src/Stream.cpp。
 . 不支持 Seek 的流返回 false / nullopt，接口不拆成两个。
 . Write 返回实际写入字节数，调用方用 written == size 判断写全了没。
 . 没开的那半边调用会失败：读模式下 Write 返回 0，写模式下 Read 返回 Error。
@@ -58,9 +58,9 @@ Files.h 管路径和整文件，Stream.h 管一段段字节，两个头同属 IO
 */
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
-#include <string_view>
 
 #include <Memory/Memory.h>
 
@@ -114,13 +114,13 @@ namespace X_Y
     {
     public:
         FileStream();
-        explicit FileStream(std::string_view path); // 只读打开
+        explicit FileStream(const std::filesystem::path &path); // 只读打开
         ~FileStream() override;
 
         // 读模式
-        bool Open(std::string_view path);
+        bool Open(const std::filesystem::path &path);
         // 写模式：append=false 覆盖（trunc），true 追加（app）
-        bool OpenWrite(std::string_view path, bool append = false);
+        bool OpenWrite(const std::filesystem::path &path, bool append = false);
 
         StreamReadResult Read(void *destination, uint64_t capacity) override;
         uint64_t Write(const void *source, uint64_t size) override;

@@ -32,35 +32,33 @@ namespace X_Y
 
     FileStream::FileStream() : m_Impl(std::make_unique<Impl>()) {}
 
-    FileStream::FileStream(std::string_view path) : m_Impl(std::make_unique<Impl>())
+    FileStream::FileStream(const std::filesystem::path &path) : m_Impl(std::make_unique<Impl>())
     {
         Open(path);
     }
 
     FileStream::~FileStream() = default;
 
-    bool FileStream::Open(std::string_view path)
+    bool FileStream::Open(const std::filesystem::path &path)
     {
         Close();
-        const auto p = std::filesystem::path(std::string(path));
-        m_Impl->in.open(p, std::ios::binary);
+        m_Impl->in.open(path, std::ios::binary);
         if (!m_Impl->in)
             return false;
 
         std::error_code error;
-        const auto size = std::filesystem::file_size(p, error);
+        const auto size = std::filesystem::file_size(path, error);
         if (!error)
             m_Impl->size = size;
         return true;
     }
 
-    bool FileStream::OpenWrite(std::string_view path, bool append)
+    bool FileStream::OpenWrite(const std::filesystem::path &path, bool append)
     {
         Close();
-        const auto p = std::filesystem::path(std::string(path));
         const auto mode = std::ios::binary | std::ios::out |
                           (append ? std::ios::app : std::ios::trunc);
-        m_Impl->out.open(p, mode);
+        m_Impl->out.open(path, mode);
         if (!m_Impl->out)
             return false;
 
