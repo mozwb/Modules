@@ -1,8 +1,10 @@
 #include "Network/src/ReactorPoller.h"
 #include "Network/NetworkError.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -178,14 +180,15 @@ namespace X_Y::detail
                 }
             }
 
-            std::vector<PollerEvent> Wait() override
+            std::vector<PollerEvent> Wait(std::chrono::milliseconds timeout) override
             {
                 std::array<epoll_event, 64> readyEvents{};
                 const int count = ::epoll_wait(
                     m_Epoll,
                     readyEvents.data(),
                     static_cast<int>(readyEvents.size()),
-                    100);
+                    static_cast<int>(
+                        std::min(timeout, std::chrono::milliseconds(100)).count()));
                 if (count < 0)
                 {
                     const int error = errno;

@@ -88,6 +88,12 @@ namespace X_Y
         Closed
     };
 
+    enum class SocketConnectStatus : std::uint8_t
+    {
+        Connected,
+        InProgress
+    };
+
     // value is present for Completed; Closed is used by stream reads.
     template <typename T>
     struct SocketIoResult
@@ -104,6 +110,8 @@ namespace X_Y
         // Bind/listen/configuration report false on failure; transport errors throw NetworkError.
         virtual bool Bind(const SocketAddr &addr) = 0;
         virtual void Connect(const SocketAddr &addr) = 0;
+        virtual SocketConnectStatus ConnectNonBlocking(const SocketAddr &addr) = 0;
+        virtual SocketConnectStatus FinishConnect() = 0;
         virtual bool Listen(int backlog) = 0;
         virtual std::unique_ptr<SocketHandleImpl> Accept() = 0;
         // Try operations require non-blocking mode.

@@ -2,6 +2,7 @@
 
 #include "Network/IoContext.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -25,7 +26,7 @@ namespace X_Y::detail
             IoInterest interest) = 0;
         virtual bool Update(std::uint64_t id, IoInterest interest) = 0;
         virtual void Remove(std::uint64_t id) noexcept = 0;
-        virtual std::vector<PollerEvent> Wait() = 0;
+        virtual std::vector<PollerEvent> Wait(std::chrono::milliseconds timeout) = 0;
         virtual void Wake() = 0;
     };
 

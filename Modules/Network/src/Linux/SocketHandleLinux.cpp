@@ -152,6 +152,63 @@ namespace X_Y
                     ThrowSocketError("connect", errno);
             }
 
+            SocketConnectStatus ConnectNonBlocking(const SocketAddr &addr) override
+            {
+                EnsureValid();
+                EnsureAddressFamily(addr, m_Family);
+                if (m_Type != SocketType::Stream)
+                    throw std::logic_error("Non-blocking connect requires a stream socket");
+                if (!SetNonBlocking(true))
+                    ThrowSocketError("fcntl", errno);
+
+                sockaddr_storage nativeAddr{};
+                socklen_t length = 0;
+                ToNativeAddress(addr, nativeAddr, length);
+                if (::connect(
+                        m_Socket,
+                        reinterpret_cast<const sockaddr *>(&nativeAddr),
+                        length) == 0)
+                {
+                    m_Connecting = false;
+                    return SocketConnectStatus::Connected;
+                }
+
+                const int error = errno;
+                if (error == EINPROGRESS || error == EALREADY || error == EWOULDBLOCK)
+                {
+                    m_Connecting = true;
+                    return SocketConnectStatus::InProgress;
+                }
+                Close();
+                ThrowSocketError("connect", error);
+            }
+
+            SocketConnectStatus FinishConnect() override
+            {
+                EnsureValid();
+                if (!m_Connecting)
+                    return SocketConnectStatus::Connected;
+
+                int error = 0;
+                socklen_t length = sizeof(error);
+                if (getsockopt(m_Socket, SOL_SOCKET, SO_ERROR, &error, &length) != 0)
+                {
+                    error = errno;
+                    Close();
+                    ThrowSocketError("getsockopt", error);
+                }
+                if (error == EINPROGRESS || error == EALREADY || error == EWOULDBLOCK)
+                    return SocketConnectStatus::InProgress;
+                if (error != 0)
+                {
+                    Close();
+                    ThrowSocketError("connect", error);
+                }
+
+                m_Connecting = false;
+                return SocketConnectStatus::Connected;
+            }
+
             bool Listen(int backlog) override
             {
                 return IsValid() && m_Type == SocketType::Stream &&
@@ -673,6 +730,7 @@ namespace X_Y
             std::chrono::milliseconds m_SendTimeout{0};
             std::chrono::milliseconds m_ReceiveTimeout{0};
             bool m_NonBlocking = false;
+            bool m_Connecting = false;
         };
     }
 

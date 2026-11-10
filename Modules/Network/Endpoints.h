@@ -8,10 +8,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <chrono>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace X_Y
 {
@@ -21,6 +24,17 @@ namespace X_Y
         virtual ~StreamTransport() = default;
 
         virtual void Connect(const std::string &host, std::uint16_t port) = 0;
+        virtual SocketConnectStatus ConnectNonBlocking(const SocketAddr &)
+        {
+            throw std::logic_error(
+                "Stream transport does not support non-blocking connect");
+        }
+        virtual SocketConnectStatus FinishConnect()
+        {
+            throw std::logic_error(
+                "Stream transport does not support non-blocking connect");
+        }
+        virtual bool IsConnecting() const noexcept { return false; }
         virtual bool SetTimeout(
             SocketTimeoutDirection,
             std::chrono::milliseconds)
@@ -150,6 +164,8 @@ namespace X_Y
         SocketIoResult<std::size_t> TrySendSome(const void *data, std::size_t size);
         SocketIoResult<std::size_t> TryReceiveSome(void *data, std::size_t capacity);
         void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
+        // Change interest after Watch(), for example to stop monitoring writes when a queue drains.
+        bool UpdateInterest(IoInterest interest);
         bool SetTimeout(
             SocketTimeoutDirection direction,
             std::chrono::milliseconds timeout);
@@ -210,6 +226,10 @@ namespace X_Y
         }
 
         void Connect(const std::string &host, std::uint16_t port);
+        // Starts an IP-address connection without blocking; finish it after writable readiness.
+        SocketConnectStatus ConnectNonBlocking(const SocketAddr &address);
+        // Call after writable readiness; connection errors are reported as NetworkError.
+        SocketConnectStatus FinishConnect();
         bool SetTimeout(
             SocketTimeoutDirection direction,
             std::chrono::milliseconds timeout);
@@ -218,6 +238,8 @@ namespace X_Y
         SocketIoResult<std::size_t> TrySendSome(const void *data, std::size_t size);
         SocketIoResult<std::size_t> TryReceiveSome(void *data, std::size_t capacity);
         void Watch(IoContext &context, IoInterest interest, IoContext::Handler handler);
+        // Change interest after Watch(), for example to stop monitoring writes when a queue drains.
+        bool UpdateInterest(IoInterest interest);
         void SendAll(const void *data, std::size_t size);
         void SendAll(const Buffer &buffer);
         std::uint64_t ReceiveSome(Buffer &buffer);
@@ -270,6 +292,46 @@ namespace X_Y
         std::unique_ptr<StreamServerTransport> m_Transport;
         IoContext::Registration m_Registration;
         bool m_ReactorMode = false;
+    };
+
+    struct StreamSendQueueFlushResult
+    {
+        SocketIoStatus status = SocketIoStatus::Completed;
+        std::size_t bytesSent = 0;
+        std::size_t pendingBytes = 0;
+    };
+
+    class StreamSendQueue
+    {
+    public:
+        // Not thread-safe. Capacity is fixed; enqueue accepts all bytes or leaves the queue unchanged.
+        explicit StreamSendQueue(std::size_t capacityBytes);
+
+        bool Enqueue(const void *data, std::size_t size);
+        // Flushes at most byteBudget bytes; pending data remains queued on WouldBlock.
+        StreamSendQueueFlushResult Flush(
+            StreamConnection &connection,
+            std::size_t byteBudget = 64 * 1024);
+        StreamSendQueueFlushResult Flush(
+            StreamClient &client,
+            std::size_t byteBudget = 64 * 1024);
+
+        std::size_t CapacityBytes() const noexcept { return m_CapacityBytes; }
+        std::size_t PendingBytes() const noexcept { return m_PendingBytes; }
+        bool Empty() const noexcept { return m_PendingBytes == 0; }
+
+    private:
+        using SendOperation =
+            std::function<SocketIoResult<std::size_t>(const void *, std::size_t)>;
+
+        StreamSendQueueFlushResult FlushWith(
+            const SendOperation &send,
+            std::size_t byteBudget);
+
+        std::size_t m_CapacityBytes;
+        std::size_t m_PendingBytes = 0;
+        std::deque<std::vector<std::byte>> m_Chunks;
+        std::size_t m_FrontOffset = 0;
     };
 
     class DatagramClient

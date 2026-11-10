@@ -1,9 +1,11 @@
 #include "Network/Endpoints.h"
 #include "Network/IoContext.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <exception>
 #include <iostream>
 #include <limits>
@@ -13,6 +15,74 @@
 
 namespace
 {
+    class ScriptedStreamTransport final : public X_Y::StreamTransport
+    {
+    public:
+        void Connect(const std::string &, std::uint16_t) override
+        {
+            m_Connected = true;
+        }
+
+        std::size_t SendSome(const void *, std::size_t) override
+        {
+            throw std::logic_error("blocking send used by scripted transport");
+        }
+
+        std::size_t ReceiveSome(void *, std::size_t) override
+        {
+            throw std::logic_error("blocking receive used by scripted transport");
+        }
+
+        X_Y::SocketIoResult<std::size_t> TrySendSome(
+            const void *data,
+            std::size_t size) override
+        {
+            if (m_BlockNextSend)
+            {
+                m_BlockNextSend = false;
+                return {X_Y::SocketIoStatus::WouldBlock, std::nullopt};
+            }
+
+            const std::size_t count = std::min(size, m_MaxWrite);
+            m_Sent.append(static_cast<const char *>(data), count);
+            if (m_BlockAfterSuccessfulSend)
+            {
+                m_BlockAfterSuccessfulSend = false;
+                m_BlockNextSend = true;
+            }
+            return {X_Y::SocketIoStatus::Completed, count};
+        }
+
+        X_Y::SocketIoResult<std::size_t> TryReceiveSome(void *, std::size_t) override
+        {
+            return {X_Y::SocketIoStatus::WouldBlock, std::nullopt};
+        }
+
+        void Close() noexcept override { m_Connected = false; }
+        bool IsConnected() const noexcept override { return m_Connected; }
+        std::optional<X_Y::SocketAddr> GetLocalAddr() const override
+        {
+            return std::nullopt;
+        }
+        std::optional<X_Y::SocketAddr> GetPeerAddr() const override
+        {
+            return std::nullopt;
+        }
+
+        void BlockAfterNextSuccessfulSend() noexcept
+        {
+            m_BlockAfterSuccessfulSend = true;
+        }
+        const std::string &Sent() const noexcept { return m_Sent; }
+
+    private:
+        bool m_Connected = false;
+        bool m_BlockNextSend = false;
+        bool m_BlockAfterSuccessfulSend = false;
+        std::size_t m_MaxWrite = 2;
+        std::string m_Sent;
+    };
+
     void Require(bool condition, const char *message)
     {
         if (!condition)
@@ -259,6 +329,258 @@ namespace
         if (runError)
             std::rethrow_exception(runError);
         Require(io.IsStopped(), "IoContext did not preserve its stopped state");
+    }
+
+    void TestIoContextTimers()
+    {
+        X_Y::IoContext io;
+        bool cancelledTimerRan = false;
+        auto cancelledTimer = io.ScheduleAfter(
+            std::chrono::seconds(5),
+            [&] { cancelledTimerRan = true; });
+        Require(cancelledTimer.Cancel(), "IoContext timer could not be cancelled");
+        Require(!cancelledTimer, "cancelled IoContext timer remained active");
+
+        const auto runThread = std::this_thread::get_id();
+        std::thread::id callbackThread;
+        bool timerRan = false;
+        bool timerAfterStopRan = false;
+        auto timer = io.ScheduleAfter(
+            std::chrono::milliseconds(40),
+            [&]
+            {
+                callbackThread = std::this_thread::get_id();
+                timerRan = true;
+                io.Stop();
+            });
+        auto timerAfterStop = io.ScheduleAfter(
+            std::chrono::milliseconds(40),
+            [&] { timerAfterStopRan = true; });
+        io.Run();
+
+        Require(timerRan, "IoContext timer callback did not run");
+        Require(!cancelledTimerRan, "cancelled IoContext timer callback ran");
+        Require(!timerAfterStopRan, "IoContext ran another timer after Stop");
+        Require(
+            callbackThread == runThread,
+            "IoContext timer callback ran outside the Run thread");
+        Require(!timer.Cancel(), "fired IoContext timer was reported as cancelled");
+
+        bool rejectedNegativeDelay = false;
+        try
+        {
+            (void)io.ScheduleAfter(std::chrono::milliseconds(-1), [] {});
+        }
+        catch (const std::invalid_argument &)
+        {
+            rejectedNegativeDelay = true;
+        }
+        Require(rejectedNegativeDelay, "IoContext accepted a negative timer delay");
+    }
+
+    void TestIoContextPost()
+    {
+        X_Y::IoContext io;
+        std::atomic<bool> runEntered{false};
+        std::thread::id runThread;
+        std::thread::id taskThread;
+        std::exception_ptr runError;
+
+        std::thread eventThread([&]
+        {
+            runThread = std::this_thread::get_id();
+            runEntered.store(true, std::memory_order_release);
+            try
+            {
+                io.Run();
+            }
+            catch (...)
+            {
+                runError = std::current_exception();
+            }
+        });
+
+        while (!runEntered.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(
+            io.Post([&]
+            {
+                taskThread = std::this_thread::get_id();
+                io.Stop();
+            }),
+            "IoContext rejected a task while running");
+        eventThread.join();
+
+        if (runError)
+            std::rethrow_exception(runError);
+        Require(taskThread == runThread, "posted task did not run on the Run thread");
+        Require(!io.Post([] {}), "stopped IoContext accepted a posted task");
+
+        bool rejectedEmptyTask = false;
+        try
+        {
+            (void)io.Post({});
+        }
+        catch (const std::invalid_argument &)
+        {
+            rejectedEmptyTask = true;
+        }
+        Require(rejectedEmptyTask, "IoContext accepted an empty posted task");
+    }
+
+    void TestAsyncDnsResolution()
+    {
+        X_Y::IoContext io;
+        std::atomic<bool> cancelledCallbackRan{false};
+        auto cancelled = io.ResolveAsync(
+            "localhost",
+            443,
+            [&](std::vector<X_Y::SocketAddr>, std::exception_ptr)
+            {
+                cancelledCallbackRan.store(true, std::memory_order_release);
+            });
+        Require(cancelled.Cancel(), "asynchronous DNS request could not be cancelled");
+        Require(!cancelled.IsPending(), "cancelled DNS request remained pending");
+
+        std::thread::id runThread;
+        std::thread::id callbackThread;
+        bool resolved = false;
+        std::vector<X_Y::SocketAddr> addresses;
+        std::exception_ptr resolutionError;
+        auto request = io.ResolveAsync(
+            "localhost",
+            443,
+            [&](std::vector<X_Y::SocketAddr> result, std::exception_ptr error)
+            {
+                callbackThread = std::this_thread::get_id();
+                addresses = std::move(result);
+                resolutionError = error;
+                resolved = true;
+                io.Stop();
+            });
+
+        std::exception_ptr runError;
+        std::thread eventThread([&]
+        {
+            runThread = std::this_thread::get_id();
+            try
+            {
+                io.Run();
+            }
+            catch (...)
+            {
+                runError = std::current_exception();
+            }
+        });
+        eventThread.join();
+
+        if (runError)
+            std::rethrow_exception(runError);
+        Require(resolved, "asynchronous DNS callback did not run");
+        Require(!cancelledCallbackRan.load(std::memory_order_acquire),
+                "cancelled DNS callback ran");
+        Require(callbackThread == runThread,
+                "asynchronous DNS callback ran outside the Run thread");
+        if (resolutionError)
+            std::rethrow_exception(resolutionError);
+        Require(!addresses.empty(), "localhost DNS resolution returned no addresses");
+        for (const auto &address : addresses)
+            Require(address.port == 443, "resolved address lost its service port");
+        Require(!request.IsPending(), "completed DNS request remained pending");
+
+        bool rejectedEmptyHost = false;
+        try
+        {
+            (void)io.ResolveAsync(
+                "",
+                80,
+                [](std::vector<X_Y::SocketAddr>, std::exception_ptr) {});
+        }
+        catch (const std::invalid_argument &)
+        {
+            rejectedEmptyHost = true;
+        }
+        Require(rejectedEmptyHost, "asynchronous DNS accepted an empty hostname");
+    }
+
+    void TestAsyncConnectComposition()
+    {
+        X_Y::StreamServer server;
+        Require(
+            server.Listen(ParseAddress("127.0.0.1:0")),
+            "async connect composition listener failed");
+        const auto address = server.GetLocalAddr();
+        Require(address.has_value(), "async connect listener has no address");
+
+        X_Y::IoContext io;
+        X_Y::StreamClient client;
+        bool connected = false;
+        bool timedOut = false;
+        std::exception_ptr operationError;
+        X_Y::IoContext::Timer timeout;
+        auto resolution = io.ResolveAsync(
+            "127.0.0.1",
+            address->port,
+            [&](std::vector<X_Y::SocketAddr> addresses, std::exception_ptr error)
+            {
+                if (error)
+                {
+                    operationError = error;
+                    io.Stop();
+                    return;
+                }
+                Require(!addresses.empty(), "async connect resolution returned no addresses");
+
+                const auto status = client.ConnectNonBlocking(addresses.front());
+                if (status == X_Y::SocketConnectStatus::Connected)
+                {
+                    connected = true;
+                    timeout.Cancel();
+                    io.Stop();
+                    return;
+                }
+
+                client.Watch(
+                    io,
+                    X_Y::IoInterest::Write,
+                    [&](X_Y::IoReady ready)
+                    {
+                        try
+                        {
+                            (void)ready;
+                            if (client.FinishConnect() ==
+                                X_Y::SocketConnectStatus::Connected)
+                            {
+                                connected = true;
+                                timeout.Cancel();
+                                io.Stop();
+                            }
+                        }
+                        catch (...)
+                        {
+                            operationError = std::current_exception();
+                            io.Stop();
+                        }
+                    });
+            });
+        timeout = io.ScheduleAfter(
+            std::chrono::seconds(2),
+            [&]
+            {
+                timedOut = true;
+                client.Close();
+                io.Stop();
+            });
+
+        io.Run();
+        if (operationError)
+            std::rethrow_exception(operationError);
+        Require(connected, "async DNS + non-blocking connect did not connect");
+        Require(!timedOut, "async DNS + non-blocking connect timed out");
+        Require(server.Accept().has_value(), "async connect was not accepted by server");
+        client.Close();
+        Require(!resolution.IsPending(), "async connect DNS request remained pending");
     }
 
     void TestNonBlockingSocketOperations()
@@ -527,6 +849,182 @@ namespace
             "StreamConnection::TryReceiveSome failed");
     }
 
+    void TestNonBlockingTcpConnect()
+    {
+        X_Y::StreamServer server;
+        Require(
+            server.Listen(ParseAddress("127.0.0.1:0")),
+            "non-blocking connect test listen failed");
+        const auto address = server.GetLocalAddr();
+        Require(address.has_value(), "non-blocking connect listener has no address");
+
+        X_Y::StreamClient client;
+        const auto startStatus = client.ConnectNonBlocking(*address);
+        Require(
+            startStatus == X_Y::SocketConnectStatus::Connected ||
+                startStatus == X_Y::SocketConnectStatus::InProgress,
+            "non-blocking connect returned an invalid state");
+
+        X_Y::IoContext io;
+        std::exception_ptr handlerError;
+        auto finishStatus = startStatus;
+        bool interestUpdated = false;
+        client.Watch(
+            io,
+            X_Y::IoInterest::Write,
+            [&](X_Y::IoReady ready)
+            {
+                try
+                {
+                    if (X_Y::HasIoReady(ready, X_Y::IoReady::Error) ||
+                        X_Y::HasIoReady(ready, X_Y::IoReady::Closed))
+                    {
+                        if (!client.IsConnected())
+                        {
+                            finishStatus = client.FinishConnect();
+                            if (finishStatus == X_Y::SocketConnectStatus::InProgress)
+                                throw std::runtime_error(
+                                    "connect error event arrived while connection was pending");
+                        }
+                        else
+                        {
+                            throw std::runtime_error(
+                                "connected socket reported a Reactor error");
+                        }
+                    }
+                    else if (X_Y::HasIoReady(ready, X_Y::IoReady::Write) &&
+                             finishStatus == X_Y::SocketConnectStatus::InProgress)
+                    {
+                        finishStatus = client.FinishConnect();
+                    }
+
+                    if (finishStatus == X_Y::SocketConnectStatus::Connected)
+                    {
+                        interestUpdated =
+                            client.UpdateInterest(X_Y::IoInterest::Read);
+                        io.Stop();
+                    }
+                }
+                catch (...)
+                {
+                    handlerError = std::current_exception();
+                    io.Stop();
+                }
+            });
+
+        std::exception_ptr runError;
+        std::thread eventThread([&]
+        {
+            try
+            {
+                io.Run();
+            }
+            catch (...)
+            {
+                runError = std::current_exception();
+            }
+        });
+
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::seconds(3);
+        while (!io.IsStopped() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!io.IsStopped())
+            io.Stop();
+        eventThread.join();
+
+        if (runError)
+            std::rethrow_exception(runError);
+        if (handlerError)
+            std::rethrow_exception(handlerError);
+        Require(
+            finishStatus == X_Y::SocketConnectStatus::Connected &&
+                client.IsConnected(),
+            "non-blocking TCP connection did not complete");
+        Require(interestUpdated, "connected client could not update Reactor interest");
+
+        auto accepted = server.Accept();
+        Require(accepted.has_value(), "server did not accept non-blocking client");
+        client.Close();
+        accepted->Close();
+        server.Close();
+    }
+
+    void TestNonBlockingTcpConnectFailure()
+    {
+        X_Y::StreamServer temporaryServer;
+        Require(
+            temporaryServer.Listen(ParseAddress("127.0.0.1:0")),
+            "connect failure test listen failed");
+        const auto refusedAddress = temporaryServer.GetLocalAddr();
+        Require(refusedAddress.has_value(), "connect failure test has no local address");
+        temporaryServer.Close();
+
+        X_Y::StreamClient client;
+        bool observedFailure = false;
+        try
+        {
+            const auto status = client.ConnectNonBlocking(*refusedAddress);
+            if (status == X_Y::SocketConnectStatus::InProgress)
+            {
+                X_Y::IoContext io;
+                std::exception_ptr runError;
+                client.Watch(
+                    io,
+                    X_Y::IoInterest::Write,
+                    [&](X_Y::IoReady ready)
+                    {
+                        if (!X_Y::HasIoReady(ready, X_Y::IoReady::Write) &&
+                            !X_Y::HasIoReady(ready, X_Y::IoReady::Error) &&
+                            !X_Y::HasIoReady(ready, X_Y::IoReady::Closed))
+                            return;
+                        try
+                        {
+                            (void)client.FinishConnect();
+                        }
+                        catch (const X_Y::NetworkError &)
+                        {
+                            observedFailure = true;
+                        }
+                        catch (...)
+                        {
+                            runError = std::current_exception();
+                        }
+                        io.Stop();
+                    });
+
+                std::thread eventThread([&]
+                {
+                    try
+                    {
+                        io.Run();
+                    }
+                    catch (...)
+                    {
+                        runError = std::current_exception();
+                    }
+                });
+                const auto deadline = std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(3);
+                while (!io.IsStopped() && std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (!io.IsStopped())
+                    io.Stop();
+                eventThread.join();
+                if (runError)
+                    std::rethrow_exception(runError);
+            }
+        }
+        catch (const X_Y::NetworkError &)
+        {
+            observedFailure = true;
+        }
+
+        Require(observedFailure, "refused non-blocking connect did not report NetworkError");
+        Require(!client.IsConnected(), "failed non-blocking connection was reported connected");
+        client.Close();
+    }
+
     void TestTcpEndpointReactorEcho()
     {
         X_Y::StreamServer server;
@@ -544,6 +1042,10 @@ namespace
         std::exception_ptr handlerError;
         bool receivedRequest = false;
         bool receivedReply = false;
+        bool requestQueued = false;
+        bool replyQueued = false;
+        X_Y::StreamSendQueue clientOutgoing(1024);
+        X_Y::StreamSendQueue serverOutgoing(1024);
         const std::string request = "reactor request";
         const std::string reply = "reactor reply";
 
@@ -579,28 +1081,52 @@ namespace
                                     X_Y::HasIoReady(connectionReady, X_Y::IoReady::Closed))
                                     throw std::runtime_error(
                                         "TCP accepted connection Reactor reported failure");
-                                if (!X_Y::HasIoReady(connectionReady, X_Y::IoReady::Read))
-                                    return;
-
-                                std::array<char, 64> buffer{};
-                                const auto received =
-                                    accepted->TryReceiveSome(buffer.data(), buffer.size());
-                                if (received.status == X_Y::SocketIoStatus::WouldBlock)
-                                    return;
-                                Require(
-                                    received.status == X_Y::SocketIoStatus::Completed &&
-                                        received.value &&
-                                        std::string(buffer.data(), *received.value) == request,
-                                    "TCP Reactor server received unexpected request");
-                                receivedRequest = true;
-
-                                const auto sent = accepted->TrySendSome(
-                                    reply.data(),
-                                    reply.size());
-                                Require(
-                                    sent.status == X_Y::SocketIoStatus::Completed &&
-                                        sent.value == reply.size(),
-                                    "TCP Reactor server failed to send reply");
+                                if (X_Y::HasIoReady(
+                                        connectionReady,
+                                        X_Y::IoReady::Read))
+                                {
+                                    std::array<char, 64> buffer{};
+                                    const auto received =
+                                        accepted->TryReceiveSome(buffer.data(), buffer.size());
+                                    if (received.status == X_Y::SocketIoStatus::Completed)
+                                    {
+                                        Require(
+                                            received.value &&
+                                                std::string(buffer.data(), *received.value) ==
+                                                    request,
+                                            "TCP Reactor server received unexpected request");
+                                        receivedRequest = true;
+                                        Require(
+                                            serverOutgoing.Enqueue(
+                                                reply.data(),
+                                                reply.size()),
+                                            "TCP Reactor server send queue is unexpectedly full");
+                                        replyQueued = true;
+                                        Require(
+                                            accepted->UpdateInterest(
+                                                X_Y::IoInterest::ReadWrite),
+                                            "TCP Reactor server failed to enable write interest");
+                                    }
+                                    else if (received.status == X_Y::SocketIoStatus::Closed)
+                                    {
+                                        throw std::runtime_error(
+                                            "TCP Reactor server connection closed before request");
+                                    }
+                                }
+                                if (replyQueued &&
+                                    X_Y::HasIoReady(
+                                        connectionReady,
+                                        X_Y::IoReady::Write))
+                                {
+                                    const auto flushed = serverOutgoing.Flush(*accepted);
+                                    if (flushed.status == X_Y::SocketIoStatus::Closed)
+                                        throw std::runtime_error(
+                                            "TCP Reactor server connection closed while sending");
+                                    if (serverOutgoing.Empty())
+                                        Require(
+                                            accepted->UpdateInterest(X_Y::IoInterest::Read),
+                                            "TCP Reactor server failed to disable write interest");
+                                }
                             }
                             catch (...)
                             {
@@ -626,47 +1152,41 @@ namespace
                     if (X_Y::HasIoReady(ready, X_Y::IoReady::Error) ||
                         X_Y::HasIoReady(ready, X_Y::IoReady::Closed))
                         throw std::runtime_error("TCP client Reactor reported failure");
-                    if (!X_Y::HasIoReady(ready, X_Y::IoReady::Write))
-                        return;
 
-                    const auto sent = client.TrySendSome(request.data(), request.size());
-                    Require(
-                        sent.status == X_Y::SocketIoStatus::Completed &&
-                            sent.value == request.size(),
-                        "TCP Reactor client failed to send request");
-                    client.Watch(
-                        io,
-                        X_Y::IoInterest::Read,
-                        [&](X_Y::IoReady readReady)
+                    if (X_Y::HasIoReady(ready, X_Y::IoReady::Write))
+                    {
+                        if (!requestQueued)
                         {
-                            try
-                            {
-                                if (X_Y::HasIoReady(readReady, X_Y::IoReady::Error) ||
-                                    X_Y::HasIoReady(readReady, X_Y::IoReady::Closed))
-                                    throw std::runtime_error(
-                                        "TCP client read Reactor reported failure");
-                                if (!X_Y::HasIoReady(readReady, X_Y::IoReady::Read))
-                                    return;
+                            Require(
+                                clientOutgoing.Enqueue(request.data(), request.size()),
+                                "TCP Reactor client send queue is unexpectedly full");
+                            requestQueued = true;
+                        }
+                        const auto flushed = clientOutgoing.Flush(client);
+                        if (flushed.status == X_Y::SocketIoStatus::Closed)
+                            throw std::runtime_error(
+                                "TCP Reactor client connection closed while sending");
+                        if (clientOutgoing.Empty())
+                            Require(
+                                client.UpdateInterest(X_Y::IoInterest::Read),
+                                "TCP Reactor client failed to disable write interest");
+                    }
 
-                                std::array<char, 64> buffer{};
-                                const auto received =
-                                    client.TryReceiveSome(buffer.data(), buffer.size());
-                                if (received.status == X_Y::SocketIoStatus::WouldBlock)
-                                    return;
-                                Require(
-                                    received.status == X_Y::SocketIoStatus::Completed &&
-                                        received.value &&
-                                        std::string(buffer.data(), *received.value) == reply,
-                                    "TCP Reactor client received unexpected reply");
-                                receivedReply = true;
-                                io.Stop();
-                            }
-                            catch (...)
-                            {
-                                handlerError = std::current_exception();
-                                io.Stop();
-                            }
-                        });
+                    if (X_Y::HasIoReady(ready, X_Y::IoReady::Read))
+                    {
+                        std::array<char, 64> buffer{};
+                        const auto received =
+                            client.TryReceiveSome(buffer.data(), buffer.size());
+                        if (received.status == X_Y::SocketIoStatus::WouldBlock)
+                            return;
+                        Require(
+                            received.status == X_Y::SocketIoStatus::Completed &&
+                                received.value &&
+                                std::string(buffer.data(), *received.value) == reply,
+                            "TCP Reactor client received unexpected reply");
+                        receivedReply = true;
+                        io.Stop();
+                    }
                 }
                 catch (...)
                 {
@@ -755,6 +1275,64 @@ namespace
         Require(
             !callbackInvoked.load(std::memory_order_acquire),
             "Endpoint callback ran after Close removed its Reactor watch");
+    }
+
+    void TestStreamSendQueue()
+    {
+        auto transport = std::make_unique<ScriptedStreamTransport>();
+        auto *script = transport.get();
+        X_Y::StreamClient client(std::move(transport));
+        client.Connect("scripted", 1);
+        X_Y::StreamSendQueue queue(8);
+
+        Require(queue.Enqueue("hello", 5), "send queue rejected data within capacity");
+        Require(!queue.Enqueue("1234", 4), "send queue accepted data beyond capacity");
+        Require(queue.PendingBytes() == 5, "send queue changed after a rejected enqueue");
+        Require(queue.Enqueue(nullptr, 0), "zero-length enqueue should be a no-op");
+
+        script->BlockAfterNextSuccessfulSend();
+        const auto blocked = queue.Flush(client);
+        Require(
+            blocked.status == X_Y::SocketIoStatus::WouldBlock &&
+                blocked.bytesSent == 2 &&
+                blocked.pendingBytes == 3 &&
+                script->Sent() == "he",
+            "send queue did not preserve data after partial write and WouldBlock");
+
+        const auto flushed = queue.Flush(client);
+        Require(
+            flushed.status == X_Y::SocketIoStatus::Completed &&
+                flushed.bytesSent == 3 &&
+                flushed.pendingBytes == 0 &&
+                queue.Empty() &&
+                script->Sent() == "hello",
+            "send queue did not resume and finish a partial write");
+
+        Require(queue.Enqueue("abcdef", 6), "send queue rejected second batch");
+        const auto budgeted = queue.Flush(client, 2);
+        Require(
+            budgeted.status == X_Y::SocketIoStatus::Completed &&
+                budgeted.bytesSent == 2 &&
+                budgeted.pendingBytes == 4,
+            "send queue ignored the per-flush byte budget");
+        Require(!queue.Enqueue("12345", 5), "send queue exceeded its configured bound");
+        const auto remainder = queue.Flush(client);
+        Require(
+            remainder.status == X_Y::SocketIoStatus::Completed &&
+                remainder.pendingBytes == 0 &&
+                script->Sent() == "helloabcdef",
+            "send queue did not preserve FIFO order");
+
+        bool rejectedZeroCapacity = false;
+        try
+        {
+            X_Y::StreamSendQueue invalid(0);
+        }
+        catch (const std::invalid_argument &)
+        {
+            rejectedZeroCapacity = true;
+        }
+        Require(rejectedZeroCapacity, "send queue accepted zero capacity");
     }
 
     void TestTimeoutValidation()
@@ -991,10 +1569,17 @@ int main()
         TestTimeoutValidation();
         TestReactorUdpReadWriteAndStop();
         TestReactorStopFromAnotherThread();
+        TestIoContextTimers();
+        TestIoContextPost();
+        TestAsyncDnsResolution();
+        TestAsyncConnectComposition();
         TestNonBlockingSocketOperations();
         TestEndpointReactorAndTryOperations();
+        TestNonBlockingTcpConnect();
+        TestNonBlockingTcpConnectFailure();
         TestTcpEndpointReactorEcho();
         TestEndpointCloseRemovesReactorWatch();
+        TestStreamSendQueue();
 #ifdef _WIN32
         TestTcpReceiveTimeout();
 #endif

@@ -7,7 +7,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -235,7 +237,7 @@ namespace X_Y::detail
                 }
             }
 
-            std::vector<PollerEvent> Wait() override
+            std::vector<PollerEvent> Wait(std::chrono::milliseconds timeout) override
             {
                 std::vector<std::pair<std::uint64_t, Watch>> snapshot;
                 {
@@ -264,8 +266,8 @@ namespace X_Y::detail
                 const int result = WSAPoll(
                     descriptors.data(),
                     static_cast<ULONG>(descriptors.size()),
-                    // Bound the wait so Stop still takes effect if the wakeup send fails.
-                    100);
+                    static_cast<int>(
+                        std::min(timeout, std::chrono::milliseconds(100)).count()));
                 if (result == SOCKET_ERROR)
                 {
                     const int error = WSAGetLastError();

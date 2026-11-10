@@ -38,6 +38,16 @@ namespace X_Y
             RequireImpl().Connect(addr);
         }
 
+        SocketConnectStatus ConnectNonBlocking(const SocketAddr &addr)
+        {
+            return RequireImpl().ConnectNonBlocking(addr);
+        }
+
+        SocketConnectStatus FinishConnect()
+        {
+            return RequireImpl().FinishConnect();
+        }
+
         bool Listen(int backlog = 128)
         {
             return m_Impl && m_Impl->Listen(backlog);

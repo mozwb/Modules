@@ -121,7 +121,7 @@ client.SendAll("hello", 5);
 ```
 
 传输 API 是同步阻塞式的。Windows 和 Linux 都实现了 `SetTimeout(direction, duration)`，
-可为 socket 的发送或接收设置超时；当前阶段只在 Windows 上构建和测试，Linux 测试之后补；
+可为 socket 的发送或接收设置超时；
 零时长表示禁用超时；超时作用于每次阻塞的 socket 收发调用，不是 `SendAll` 等整段操作的总时限，
 操作超时会抛出 `NetworkTimeoutError`。客户端可在连接前设置收发超时，
 服务端设置的超时会应用到之后 `Accept()` 得到的连接。此选项不限制 DNS 解析、连接建立或
@@ -130,16 +130,35 @@ socket 实现。对已创建的 socket，`SetTimeout` 返回 `false` 表示系�
 transport 也可以返回 `false` 表示不支持。连接前配置的选项会在 `Connect()` 创建 socket 时应用，
 若应用失败，`Connect()` 会抛出 `NetworkError`。
 `SendAll()` 由多次 socket 发送组成；如果中途超时，可能已有部分字节发出，因此不能盲目从头重试整条消息。
-`ctest --test-dir build` 在 Windows 运行 loopback TCP/UDP、endpoint 解析及 TCP/UDP 接收超时测试。
-Linux 有对应实现，但当前暂不构建或运行这组测试，后续再验证。
+`ctest --test-dir build` 在 Windows 和 Linux 运行 loopback TCP/UDP、Endpoint/Reactor、
+非阻塞操作及发送队列测试。
 
-### Windows Reactor（开发中）
+### Reactor（开发中）
 
-`IoContext` 是 Windows Reactor 的事件循环基础，当前通过 `WSAPoll` 等待 socket 可读/可写事件。
+`IoContext` 是 Reactor 事件循环，Windows 使用 `WSAPoll`，Linux 使用 `epoll` 等待 socket 可读/可写事件。
 可用 `Watch()` 注册 `SocketHandle`，它会将 socket 切为非阻塞并返回 RAII `Registration`；
 销毁或 `Reset()` 会解除注册，
 `Update()` 可修改关注方向。回调在调用 `Run()` 的线程执行；一个 `IoContext` 同时只允许一个
 `Run()` 调用。`Stop()` 可从其他线程请求停止，并唤醒事件循环。
+
+`ScheduleAfter(delay, handler)` 可注册一次性定时器；定时器句柄析构或调用 `Cancel()` 会取消尚未触发的定时器。
+定时器回调在 `Run()` 所在线程执行，可从回调中调用 `Stop()`。例如，可在非阻塞连接等待期间安排超时，
+并在超时回调中关闭仍处于连接中的 `StreamClient`；关闭 socket 会结束该连接尝试。该定时器不提供周期执行，
+也不会自动关闭连接。
+
+`Post(task)` 可从其他线程安全地把任务投递给事件循环；任务在 `Run()` 线程执行。空任务会抛出
+`std::invalid_argument`，已经停止的 `IoContext` 返回 `false`，停止后尚未执行的任务不会继续运行。
+
+`ResolveAsync(host, port, handler)` 在线程池中执行系统名称解析，并把
+`handler(addresses, error)` 投递回 `Run()` 线程；解析失败时 `error` 非空，可用
+`std::rethrow_exception(error)` 获取 `NetworkError`。返回的 `ResolveRequest` 必须保留到请求完成；
+调用 `Cancel()` 或销毁句柄会抑制尚未投递的回调。操作系统的 `getaddrinfo` 本身不可取消，因此取消只保证
+不再调用用户回调，不会中断正在执行的系统解析。解析工作由最多两个 worker 共享执行。
+
+例如，异步连接可组合解析、非阻塞连接和定时器：先保存 `ResolveRequest`，在解析回调中调用
+`ConnectNonBlocking(address)`；若返回 `InProgress`，注册写就绪并调用 `FinishConnect()`。同时用
+`ScheduleAfter()` 安排超时，在超时回调关闭客户端并停止/推进应用状态；连接成功时取消定时器。
+这几个步骤都在 `IoContext` 回调线程串行执行，避免跨线程操作同一个 Endpoint。
 
 `SocketHandle` 现提供 `TryAccept`、`TrySendSome`、`TryReceiveSome`、`TrySendTo` 和
 `TryReceiveFrom`。这些操作必须先对 socket 显式调用 `SetNonBlocking(true)`；就绪回调中可按
@@ -151,9 +170,37 @@ TCP/UDP Endpoints 也提供对应的 `Try*` 操作，以及 `Watch(IoContext&, i
 `Watch()` 自动把底层 socket 设为非阻塞，并由 Endpoint 持有注册；Endpoint 关闭或析构时会先注销。
 自定义 transport 若未实现非阻塞操作或 Reactor 注册，会明确抛出 `std::logic_error`。启用
 `Try*` 或 `Watch()` 后，不要再对同一 Endpoint 使用同步阻塞收发；解除监听不会恢复阻塞模式。
-非阻塞连接建立还未实现，`Connect()` 仍是同步操作。WSAPoll 会扫描注册 socket，先用于验证和学习，
-不保证适合极大量连接；后续需通过压力测试评估。Linux 的 Reactor 后端尚未实现；目前 Linux 构建
-提供显式的 unsupported backend，创建 `IoContext` 会抛出 `std::runtime_error`。
+`Connect(host, port)` 仍同步执行 DNS 解析和连接建立。WSAPoll 会扫描注册 socket，后续需通过压力
+测试评估其在大量连接下的表现；Linux 使用 `epoll` 后端。`StreamClient::ConnectNonBlocking(address)`
+已支持基于数值 IP 地址启动非阻塞连接；若返回 `InProgress`，用 `Watch(..., Write, ...)`
+监听连接 socket，在可写/错误通知中调用 `FinishConnect()` 检查结果。连接失败会抛出 `NetworkError`。
+`Connect(host, port)` 仍同步解析 DNS；需要异步解析时使用 `IoContext::ResolveAsync()`，再组合非阻塞连接。
+
+`StreamSendQueue(capacityBytes)` 提供有界、FIFO 的 TCP 待发送队列。`Enqueue()` 要么完整加入数据，
+要么在容量不足时返回 `false`，不会部分接受。`Flush()` 处理部分写入和 `WouldBlock`，并返回本轮
+发送字节数及仍待发送的字节数；每次调用有字节预算，避免单个连接长时间占用事件循环。队列不会自动
+注册可写事件：有待发送数据时调用 `UpdateInterest(ReadWrite)`，队列清空后切回 `Read`，以免可写事件
+造成空转。队列不是线程安全的，应和对应 Endpoint 一样限制在事件循环线程使用。队列满时由应用决定
+暂停上游、稍后重试或拒绝数据。
+
+```cpp
+X_Y::StreamSendQueue outgoing(256 * 1024); // 最多缓存 256 KiB
+
+// 已经在 io 回调中，并且 connection 已通过 Watch 注册
+if (!outgoing.Enqueue(message.data(), message.size()))
+{
+    // 队列满：由应用做背压处理，不要丢掉已接受的数据
+    return;
+}
+connection.UpdateInterest(X_Y::IoInterest::ReadWrite);
+
+// 收到可写通知时
+const auto flushed = outgoing.Flush(connection);
+if (flushed.status == X_Y::SocketIoStatus::Closed)
+    connection.Close();
+else if (outgoing.Empty())
+    connection.UpdateInterest(X_Y::IoInterest::Read);
+```
 
 ### Log 异步输出
 

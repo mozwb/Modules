@@ -121,6 +121,7 @@ namespace X_Y
 
                 Close();
                 m_NonBlocking = false;
+                m_Connecting = false;
 #ifdef _WIN32
                 WinsockSession winsock;
 #endif
@@ -176,6 +177,37 @@ namespace X_Y
                 if (lastError)
                     throw *lastError;
                 throw NetworkError("connect", 0, "no usable address was returned");
+            }
+
+            SocketConnectStatus ConnectNonBlocking(const SocketAddr &address) override
+            {
+                Close();
+                m_NonBlocking = false;
+                SocketHandle socket(address.family, SocketType::Stream);
+                if (m_SendTimeout.count() != 0)
+                    ApplyTimeout(socket, SocketTimeoutDirection::Send, m_SendTimeout);
+                if (m_ReceiveTimeout.count() != 0)
+                    ApplyTimeout(socket, SocketTimeoutDirection::Receive, m_ReceiveTimeout);
+
+                const auto status = socket.ConnectNonBlocking(address);
+                m_Socket.emplace(std::move(socket));
+                m_NonBlocking = true;
+                m_Connecting = status == SocketConnectStatus::InProgress;
+                return status;
+            }
+
+            SocketConnectStatus FinishConnect() override
+            {
+                if (!m_Socket || !m_Socket->IsValid())
+                    throw std::logic_error("Stream transport has no pending connection");
+                const auto status = m_Socket->FinishConnect();
+                m_Connecting = status == SocketConnectStatus::InProgress;
+                return status;
+            }
+
+            bool IsConnecting() const noexcept override
+            {
+                return m_Socket && m_Socket->IsValid() && m_Connecting;
             }
 
             bool SetTimeout(
@@ -237,11 +269,12 @@ namespace X_Y
                     m_Socket->Close();
                     m_Socket.reset();
                 }
+                m_Connecting = false;
             }
 
             bool IsConnected() const noexcept override
             {
-                return m_Socket && m_Socket->IsValid();
+                return m_Socket && m_Socket->IsValid() && !m_Connecting;
             }
 
             std::optional<SocketAddr> GetLocalAddr() const override
@@ -282,6 +315,7 @@ namespace X_Y
 
             std::optional<SocketHandle> m_Socket;
             bool m_NonBlocking = false;
+            bool m_Connecting = false;
             std::chrono::milliseconds m_SendTimeout{0};
             std::chrono::milliseconds m_ReceiveTimeout{0};
         };
@@ -657,6 +691,11 @@ namespace X_Y
         m_ReactorMode = true;
     }
 
+    bool StreamConnection::UpdateInterest(IoInterest interest)
+    {
+        return m_Registration.Update(interest);
+    }
+
     bool StreamConnection::SetTimeout(
         SocketTimeoutDirection direction,
         std::chrono::milliseconds timeout)
@@ -705,6 +744,23 @@ namespace X_Y
         m_Registration.Reset();
         m_ReactorMode = false;
         m_Transport->Connect(host, port);
+    }
+
+    SocketConnectStatus StreamClient::ConnectNonBlocking(const SocketAddr &address)
+    {
+        EnsureStreamTransport(m_Transport);
+        m_Registration.Reset();
+        m_ReactorMode = true;
+        return m_Transport->ConnectNonBlocking(address);
+    }
+
+    SocketConnectStatus StreamClient::FinishConnect()
+    {
+        EnsureStreamTransport(m_Transport);
+        if (!m_Transport->IsConnecting())
+            throw std::logic_error("Stream client has no pending non-blocking connection");
+        m_ReactorMode = true;
+        return m_Transport->FinishConnect();
     }
 
     bool StreamClient::SetTimeout(
@@ -762,11 +818,16 @@ namespace X_Y
         IoContext::Handler handler)
     {
         EnsureStreamTransport(m_Transport);
-        if (!m_Transport->IsConnected())
-            throw std::logic_error("Stream client is not connected");
+        if (!m_Transport->IsConnected() && !m_Transport->IsConnecting())
+            throw std::logic_error("Stream client is not connected or connecting");
         m_Registration.Reset();
         m_Registration = m_Transport->Watch(context, interest, std::move(handler));
         m_ReactorMode = true;
+    }
+
+    bool StreamClient::UpdateInterest(IoInterest interest)
+    {
+        return m_Registration.Update(interest);
     }
 
     void StreamClient::SendAll(const void *data, std::size_t size)
@@ -903,6 +964,99 @@ namespace X_Y
     std::optional<SocketAddr> StreamServer::GetLocalAddr() const
     {
         return m_Transport ? m_Transport->GetLocalAddr() : std::nullopt;
+    }
+
+    StreamSendQueue::StreamSendQueue(std::size_t capacityBytes)
+        : m_CapacityBytes(capacityBytes)
+    {
+        if (capacityBytes == 0)
+            throw std::invalid_argument("Stream send queue capacity must be greater than zero");
+    }
+
+    bool StreamSendQueue::Enqueue(const void *data, std::size_t size)
+    {
+        if (size == 0)
+            return true;
+        if (data == nullptr)
+            throw std::invalid_argument("Stream send queue data is null");
+        if (size > m_CapacityBytes - m_PendingBytes)
+            return false;
+
+        std::vector<std::byte> chunk(size);
+        std::memcpy(chunk.data(), data, size);
+        m_Chunks.push_back(std::move(chunk));
+        m_PendingBytes += size;
+        return true;
+    }
+
+    StreamSendQueueFlushResult StreamSendQueue::Flush(
+        StreamConnection &connection,
+        std::size_t byteBudget)
+    {
+        return FlushWith(
+            [&connection](const void *data, std::size_t size)
+            {
+                return connection.TrySendSome(data, size);
+            },
+            byteBudget);
+    }
+
+    StreamSendQueueFlushResult StreamSendQueue::Flush(
+        StreamClient &client,
+        std::size_t byteBudget)
+    {
+        return FlushWith(
+            [&client](const void *data, std::size_t size)
+            {
+                return client.TrySendSome(data, size);
+            },
+            byteBudget);
+    }
+
+    StreamSendQueueFlushResult StreamSendQueue::FlushWith(
+        const SendOperation &send,
+        std::size_t byteBudget)
+    {
+        StreamSendQueueFlushResult result;
+        result.pendingBytes = m_PendingBytes;
+        if (byteBudget == 0 || m_Chunks.empty())
+            return result;
+
+        while (!m_Chunks.empty() && result.bytesSent < byteBudget)
+        {
+            const auto &chunk = m_Chunks.front();
+            const std::size_t chunkRemaining = chunk.size() - m_FrontOffset;
+            const std::size_t requestSize =
+                std::min(chunkRemaining, byteBudget - result.bytesSent);
+            const auto sent = send(chunk.data() + m_FrontOffset, requestSize);
+
+            if (sent.status != SocketIoStatus::Completed)
+            {
+                result.status = sent.status;
+                break;
+            }
+            if (!sent.value)
+                throw std::logic_error("Stream transport completed a send without a byte count");
+            if (*sent.value > requestSize)
+                throw std::logic_error("Stream transport reported sending too many bytes");
+            if (*sent.value == 0)
+            {
+                result.status = SocketIoStatus::Closed;
+                break;
+            }
+
+            m_FrontOffset += *sent.value;
+            m_PendingBytes -= *sent.value;
+            result.bytesSent += *sent.value;
+            if (m_FrontOffset == chunk.size())
+            {
+                m_Chunks.pop_front();
+                m_FrontOffset = 0;
+            }
+        }
+
+        result.pendingBytes = m_PendingBytes;
+        return result;
     }
 
     DatagramClient::DatagramClient(std::unique_ptr<DatagramTransport> transport)

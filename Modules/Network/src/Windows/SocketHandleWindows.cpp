@@ -172,6 +172,70 @@ namespace X_Y
                     ThrowSocketError("connect", WSAGetLastError());
             }
 
+            SocketConnectStatus ConnectNonBlocking(const SocketAddr &addr) override
+            {
+                EnsureValid();
+                EnsureAddressFamily(addr, m_Family);
+                if (m_Type != SocketType::Stream)
+                    throw std::logic_error("Non-blocking connect requires a stream socket");
+                if (!SetNonBlocking(true))
+                    ThrowSocketError("ioctlsocket", WSAGetLastError());
+
+                sockaddr_storage nativeAddr{};
+                int length = 0;
+                ToNativeAddress(addr, nativeAddr, length);
+                if (::connect(
+                        m_Socket,
+                        reinterpret_cast<const sockaddr *>(&nativeAddr),
+                        length) == 0)
+                {
+                    m_Connecting = false;
+                    return SocketConnectStatus::Connected;
+                }
+
+                const int error = WSAGetLastError();
+                if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS ||
+                    error == WSAEALREADY)
+                {
+                    m_Connecting = true;
+                    return SocketConnectStatus::InProgress;
+                }
+                Close();
+                ThrowSocketError("connect", error);
+            }
+
+            SocketConnectStatus FinishConnect() override
+            {
+                EnsureValid();
+                if (!m_Connecting)
+                    return SocketConnectStatus::Connected;
+
+                int error = 0;
+                int length = sizeof(error);
+                if (getsockopt(
+                        m_Socket,
+                        SOL_SOCKET,
+                        SO_ERROR,
+                        reinterpret_cast<char *>(&error),
+                        &length) == SOCKET_ERROR)
+                {
+                    error = WSAGetLastError();
+                    Close();
+                    ThrowSocketError("getsockopt", error);
+                }
+                if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS ||
+                    error == WSAEALREADY)
+                    return SocketConnectStatus::InProgress;
+                if (error != 0)
+                {
+                    Close();
+                    ThrowSocketError("connect", error);
+                }
+
+                m_Connecting = false;
+                return SocketConnectStatus::Connected;
+            }
+
             bool Listen(int backlog) override
             {
                 return IsValid() && m_Type == SocketType::Stream &&
@@ -696,6 +760,7 @@ namespace X_Y
             SocketType m_Type;
             SOCKET m_Socket = INVALID_SOCKET;
             bool m_NonBlocking = false;
+            bool m_Connecting = false;
             std::chrono::milliseconds m_SendTimeout{0};
             std::chrono::milliseconds m_ReceiveTimeout{0};
         };
