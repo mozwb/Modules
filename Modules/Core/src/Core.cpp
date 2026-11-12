@@ -80,6 +80,18 @@ namespace X_Y::Utils
     {
         return TrimRight(TrimLeft(s));
     }
+    std::string TrimSpace(const std::string &s)
+    {
+        std::string res;
+        for (char c : s)
+        {
+            if (c != ' ')
+            {
+                res += c;
+            }
+        }
+        return res;
+    }
     std::vector<std::string> Split(const std::string &s, const std::string &delimiter)
     {
         std::vector<std::string> result;

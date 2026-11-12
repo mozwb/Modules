@@ -66,6 +66,7 @@ namespace X_Y
         std::string TrimLeft(const std::string &s);
         std::string TrimRight(const std::string &s);
         std::string Trim(const std::string &s);
+        std::string TrimSpace(const std::string &s);
         std::vector<std::string> Split(const std::string &s, const std::string &delimiter);
         std::string Replace(const std::string &s, const std::string &old_value, const std::string &new_value);
 
