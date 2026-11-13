@@ -5,14 +5,6 @@
 
 namespace X_Y
 {
-    bool IsRightKey(const char c)
-    {
-        return c == '}' || c == ']';
-    }
-    bool IsLeftKey(const char c)
-    {
-        return c == '{' || c == '[';
-    }
     // 输出和s等长的depth数组
     std::vector<int> BuildDepthMap(const std::string &s)
     {
@@ -61,13 +53,13 @@ namespace X_Y
 
     JsonValue json::Parse(const std::string &JS)
     {
-        std::string s = Utils::TrimSpace(JS);
+        std::string s = Utils::Trim(JS);
         return ParseValue(s);
     }
 
     JsonValue json::ParseValue(std::string_view strView)
     {
-        std::string s = Utils::TrimSpace(std::string(strView));
+        std::string s = Utils::Trim(std::string(strView));
         JsonValue v;
         if (s.empty())
         {
@@ -116,13 +108,13 @@ namespace X_Y
         Res.objectValue = new JsonObject();
         JsonObject &map = *Res.objectValue;
 
-        std::string src = Utils::TrimSpace(std::string(strView));
+        std::string src = Utils::Trim(std::string(strView));
         if (src.size() >= 2 && src.front() == '{' && src.back() == '}')
         {
             src = src.substr(1, src.size() - 2);
         }
         std::string s = src;
-        auto depth = Utils::BuildDepthMap(s);
+        auto depth = BuildDepthMap(s);
         std::vector<size_t> commas;
         for (size_t i = 0; i < s.size(); ++i)
         {
@@ -137,20 +129,20 @@ namespace X_Y
         size_t last = 0;
         for (size_t pos : commas)
         {
-            std::string piece = s.substr(last, pos - pos);
-            piece = Utils::TrimSpace(piece);
+            std::string piece = s.substr(last, pos - last);
+            piece = Utils::Trim(piece);
             if (!piece.empty())
                 kvPieces.push_back(piece);
             last = pos + 1;
         }
         std::string lastPiece = s.substr(last);
-        lastPiece = Utils::TrimSpace(lastPiece);
+        lastPiece = Utils::Trim(lastPiece);
         if (!lastPiece.empty())
             kvPieces.push_back(lastPiece);
 
         for (auto &piece : kvPieces)
         {
-            auto pieceDepth = Utils::BuildDepthMap(piece);
+            auto pieceDepth = BuildDepthMap(piece);
             size_t colonPos = std::string::npos;
             for (size_t i = 0; i < piece.size(); ++i)
             {
@@ -164,8 +156,8 @@ namespace X_Y
                 continue;
             std::string keyStr = piece.substr(0, colonPos);
             std::string valRaw = piece.substr(colonPos + 1);
-            keyStr = Utils::TrimSpace(keyStr);
-            valRaw = Utils::TrimSpace(valRaw);
+            keyStr = Utils::Trim(keyStr);
+            valRaw = Utils::Trim(valRaw);
             if (keyStr.size() >= 2 && keyStr.front() == '"' && keyStr.back() == '"')
             {
                 keyStr = keyStr.substr(1, keyStr.size() - 2);
@@ -183,16 +175,16 @@ namespace X_Y
         res.arrayValue = new JsonArray();
         JsonArray &arr = *res.arrayValue;
 
-        std::string s = Utils::TrimSpace(std::string(strView));
+        std::string s = Utils::Trim(std::string(strView));
         if (s.size() >= 2 && s.front() == '[' && s.back() == ']')
         {
             s = s.substr(1, s.size() - 2);
         }
-        s = Utils::TrimSpace(s);
+        s = Utils::Trim(s);
         if (s.empty())
             return res;
 
-        auto depth = Utils::BuildDepthMap(s);
+        auto depth = BuildDepthMap(s);
         std::vector<size_t> commas;
         for (size_t i = 0; i < s.size(); ++i)
         {
@@ -207,13 +199,13 @@ namespace X_Y
         for (size_t pos : commas)
         {
             std::string piece = s.substr(last, pos - last);
-            piece = Utils::TrimSpace(piece);
+            piece = Utils::Trim(piece);
             if (!piece.empty())
                 elemPieces.push_back(piece);
             last = pos + 1;
         }
         std::string lastPiece = s.substr(last);
-        lastPiece = Utils::TrimSpace(lastPiece);
+        lastPiece = Utils::Trim(lastPiece);
         if (!lastPiece.empty())
             elemPieces.push_back(lastPiece);
 

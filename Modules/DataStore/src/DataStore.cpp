@@ -531,7 +531,7 @@ namespace X_Y
         // 先重建索引
         LoadIndex();
 
-        std::vector<XPath> files = dir.ListDirectory();
+        std::vector<XPath> files = dir.ListXPaths();
         for (const auto &file : files)
         {
             if (file.IsFile() && file.getName() != ".dsidx")

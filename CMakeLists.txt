@@ -80,6 +80,7 @@ set(XY_MODULE_ORDER
     Timer
     Math
     IO
+    Json
     DataStore
     Decoder
     Input
