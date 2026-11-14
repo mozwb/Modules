@@ -51,6 +51,50 @@ namespace X_Y
     bool IsRightKey(const char c) { return c == '}' || c == ']'; }
     bool IsLeftKey(const char c) { return c == '{' || c == '['; }
 
+    std::string JsonValue::ToString() const
+    {
+        switch (type)
+        {
+        case Type::Null:
+            return "null";
+        case Type::Boolean:
+            return booleanValue ? "true" : "false";
+        case Type::Number:
+        case Type::String:
+            return *stringValue;
+        case Type::Array:
+        {
+            std::string result = "[";
+            for (size_t i = 0; i < arrayValue->size(); ++i)
+            {
+                if (i > 0)
+                    result += ',';
+                result += (*arrayValue)[i].ToString();
+            }
+            result += ']';
+            return result;
+        }
+        case Type::Object:
+        {
+            std::string result = "{";
+            bool first = true;
+            for (const auto &[key, value] : *objectValue)
+            {
+                if (!first)
+                    result += ',';
+                first = false;
+                result += '"';
+                result += key;
+                result += "\":";
+                result += value.ToString();
+            }
+            result += '}';
+            return result;
+        }
+        }
+        return "null";
+    }
+
     JsonValue json::Parse(const std::string &JS)
     {
         std::string s = Utils::Trim(JS);

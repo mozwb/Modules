@@ -5,7 +5,7 @@
 
 #忽略当前目录某文件
 git_push.bat
-
+out/
 # ./dist_manifest.txt
 # 琉璃笔记（不纳入版本控制）
 _notes/

@@ -1,0 +1,9 @@
+{
+    "root": "./out",
+    "bin": "bin",
+    "modules": "modules",
+    "lib": "lib",
+    "temp": ".cache/tmp",
+    "source": "Modules",
+    "program": "programs"
+}

@@ -156,6 +156,8 @@ namespace X_Y
                 static_assert(detail::always_false<T>, "unsupported type for JsonValue::Get<T>");
             }
         }
+
+        std::string ToString() const;
     };
     using JsonObject = std::unordered_map<std::string, JsonValue>;
     using JsonArray = std::vector<JsonValue>;
